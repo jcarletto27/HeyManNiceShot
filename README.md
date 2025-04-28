@@ -63,7 +63,7 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
 
 * **Adafruit GFX Library:** Install via Arduino Library Manager.
 * **Adafruit SSD1306:** Install via Arduino Library Manager.
-* **[espTone2x](https://github.com/jcarletto27/EspTone2x):** Needs to be manually installed. You can likely find this library on GitHub. Download it and place it in your Arduino `libraries` folder. ([Search for espTone2x](https://github.com/search?q=esptone2x&type=repositories) - select the appropriate one, often by `lbernstone`).
+* **[espTone2x](https://github.com/jcarletto27/EspTone2x):** Needs to be manually installed. You can likely find this library on GitHub. Download it and place it in your Arduino `libraries` folder.
 * **ESP32 Arduino Core:** Assumes you have the ESP32 board support package installed in your Arduino IDE. Includes (`driver/i2s.h`, `esp_random.h`, `Preferences.h`).
 
 ## Configuration
