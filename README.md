@@ -46,8 +46,8 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
 | Button 1 (Start/Up)   | `BUTTON1_PIN` | D0 (`GPIO_NUM_2`) | Momentary Button 1 |
 | Button 2 (Stop/Down)  | `BUTTON2_PIN` | D1 (`GPIO_NUM_3`) | Momentary Button 2 |
 | Buzzer Pin 1a         | `TONE_PIN_1`  | D6 (`GPIO_NUM_7`) | Buzzer (+)        |
-| Buzzer Pin 1b         | `TONE_PIN_1_2`| D7 (`GPIO_NUM_21`)| Buzzer (-)        |
-| Buzzer Pin 2a         | `TONE_PIN_2`  | D3 (`GPIO_NUM_4`) | Buzzer (+)        |
+| Buzzer Pin 1b         | `TONE_PIN_1_2`| D7 (`GPIO_NUM_21`)| Buzzer (+)        |
+| Buzzer Pin 2a         | `TONE_PIN_2`  | D3 (`GPIO_NUM_4`) | Buzzer (-)        |
 | Buzzer Pin 2b         | `TONE_PIN_2_2`| D2 (`GPIO_NUM_5`) | Buzzer (-)        |
 | I2C Data              | `I2C_SDA_PIN` | D4 (`GPIO_NUM_5`) | OLED SDA          |
 | I2C Clock             | `I2C_SCL_PIN` | D5 (`GPIO_NUM_6`) | OLED SCL          |
