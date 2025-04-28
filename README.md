@@ -1,4 +1,5 @@
-# ESP32-C3 I2S Shot Timer
+# Hey Man, Nice Shot
+## ESP32-C3 I2S Shot Timer
 
 An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone for precise audio capture, an SSD1306 OLED display for user interface, and a buzzer for audio feedback. It detects loud noises (shots) based on sound levels (RMS), times the intervals, and allows configuration through an on-device menu.
 
