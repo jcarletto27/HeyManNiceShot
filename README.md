@@ -32,12 +32,13 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
 
 ## Hardware Requirements
 
-* **Microcontroller:** ESP32-C3 (Tested with XIAO ESP32C3, pin definitions use XIAO D# aliases).
-* **Microphone:** I2S Digital Microphone (e.g., INMP441, ICS43434, SPH0645).
-* **Display:** 128x64 SSD1306 OLED Display (I2C interface).
-* **Buttons:** 2 x Momentary Push Buttons.
-* **Buzzer:** Passive Buzzer.
-* **Wiring:** Connecting wires, potentially a breadboard or PCB.
+* **Microcontroller:** ESP32-C3 [DigiKey](https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991054/16652880) (Tested with XIAO ESP32C3, pin definitions use XIAO D# aliases).
+* **Microphone:** I2S Digital Microphone (e.g., INMP441, ICS43434, SPH0645). [Amazon](https://a.co/d/dpjLYD9)
+* **Display:** 128x64 SSD1306 OLED Display (I2C interface). [DigiKey](https://www.digikey.com/en/products/detail/universal-solder-electronics-ltd/26095/16822116)
+* **Buttons:** 2 x Momentary Push Buttons. [Amazon](https://a.co/d/9ReTBhi)
+* **Buzzer:** Passive Buzzer. [DigiKey](https://www.digikey.com/short/qd1v02wq)
+* **Wiring:** Connecting wires, potentially a breadboard or PCB. [Amazon-Solderable Breadboard](https://a.co/d/a0BvrwT)
+* **Battery** Must be 3.7v LiPo to use the charging circuit on the XIAO boards, something between 800mah and 1500mah should be sufficient [Amazon](https://a.co/d/4fThqvW)
 
 ## Pinout (Based on XIAO ESP32C3 D# Aliases in Code)
 
