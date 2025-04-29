@@ -171,9 +171,3 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
     * Select the correct COM port under `Tools -> Port`.
 7.  **Upload Code:** Open the `.ino` file, verify (compile), and upload to the ESP32-C3.
 8.  **Monitor (Optional):** Open the Serial Monitor (`Tools -> Serial Monitor`) at 115200 baud to view debug messages, calibration info, and state changes.
-
-## License
-
-Consider adding a license file (e.g., MIT, Apache 2.0) to your repository. You can mention the chosen license here. Example:
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details (assuming you create a LICENSE file).
