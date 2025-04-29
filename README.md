@@ -34,7 +34,8 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
 * **Add a Dry fire timing drill**
 * **Add a Live fire timing drill**
    * Incorporate MMU/Gyroscope to match recoil with gun shot, for busy ranges
-* **Migrate code to m5stickC PLUS2** the m5stickC PLUS2 has most of the required hardware, with the only drawback being a lower output piezo buzzer
+* **Migrate code to m5stickC PLUS2**
+   * The m5stickC PLUS2 has most of the below required hardware, with the only drawback being a lower output piezo buzzer (75dB versus my recommended 100dB)
    * Design a simple, low cost daughter board for louder buzzer
 
 
