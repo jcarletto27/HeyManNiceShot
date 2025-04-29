@@ -30,6 +30,16 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
 * **Audio Feedback:** Uses `espTone2x` library for buzzer sounds (start beep, success/failure notifications).
 * **State Machine Logic:** Clearly defined states (`IDLE`, `READY`, `WAITING`, `TIMING`, `DISPLAY_RESULT`, `SETTINGS`, `CALIBRATING_THRESHOLD`, `CALIBRATION_ERROR`) manage the device's operation.
 
+## Future Changes / Feature Requests
+* **Add a Dry fire timing drill**
+* **Add a Live fire timing drill**
+   * Incorporate MMU/Gyroscope to match recoil with gun shot, for busy ranges
+* **Migrate code to m5stickC PLUS2** the m5stickC PLUS2 has most of the required hardware, with the only drawback being a lower output piezo buzzer
+   * Design a simple, low cost daughter board for louder buzzer
+
+
+
+
 ## Hardware Requirements
 
 * **Microcontroller:** ESP32-C3 [DigiKey](https://www.digikey.com/en/products/detail/seeed-technology-co-ltd/113991054/16652880) (Tested with XIAO ESP32C3, pin definitions use XIAO D# aliases).
