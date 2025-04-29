@@ -171,3 +171,7 @@ An Arduino-based shot timer using an ESP32-C3 microcontroller, an I2S microphone
     * Select the correct COM port under `Tools -> Port`.
 7.  **Upload Code:** Open the `.ino` file, verify (compile), and upload to the ESP32-C3.
 8.  **Monitor (Optional):** Open the Serial Monitor (`Tools -> Serial Monitor`) at 115200 baud to view debug messages, calibration info, and state changes.
+
+
+## Youtube video Demonstration
+[![HeyManNiceShotTimer](https://img.youtube.com/vi/igtFVzwk8jE/0.jpg)](https://www.youtube.com/watch?v=igtFVzwk8jE)
