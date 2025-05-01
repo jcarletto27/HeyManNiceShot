@@ -12,20 +12,25 @@
 const unsigned long LONG_PRESS_DURATION_MS = 750; // Hold duration for settings/return
 const unsigned long SHOT_REFRACTORY_MS = 150;     // Min time (ms) between detected shots
 const unsigned long TIMEOUT_DURATION_MS = 15000;  // 15 seconds timeout
-const unsigned long BEEP_NOTE_DURATION_MS = 100;  // Duration for beep notes
+const unsigned long BEEP_NOTE_DURATION_MS = 150;  // Duration for beep notes
 const unsigned long BEEP_NOTE_DELAY_MS = 50;      // Delay between beep notes
 const unsigned long BATTERY_CHECK_INTERVAL_MS = 60000; // Check battery every 60 seconds
 const float BATTERY_LOW_PERCENTAGE = 0.78;        // 78% threshold for low battery warning
 const int MAX_SHOTS_LIMIT = 20; // Absolute maximum array size
 const int MENU_ITEM_HEIGHT_LANDSCAPE = 25;
 const int MENU_ITEM_HEIGHT_PORTRAIT = 18; // Smaller height for portrait text size 1
-const int MENU_ITEMS_PER_SCREEN_LANDSCAPE = 4;
-const int MENU_ITEMS_PER_SCREEN_PORTRAIT = 6; // Can fit more vertically with text size 1
-const unsigned long POST_BEEP_DELAY_MS = 100; // Small delay after start beep to prevent false trigger
+const int MENU_ITEMS_PER_SCREEN_LANDSCAPE = 4; // Adjusted for potentially longer setting names
+const int MENU_ITEMS_PER_SCREEN_PORTRAIT = 5; // Adjusted for potentially longer setting names
+const unsigned long POST_BEEP_DELAY_MS = 350; // Small delay after start beep to prevent false trigger
 const int MAX_FILES_LIST = 20; // Max files to list on status screen
-const unsigned long BOOT_JPG_FRAME_DELAY_MS = 100; // Delay between JPG frames <-- CHANGED
-const int MAX_BOOT_JPG_FRAMES = 150; // Stop checking after this many frames <-- CHANGED
+const unsigned long BOOT_JPG_FRAME_DELAY_MS = 100; // Delay between JPG frames
+const int MAX_BOOT_JPG_FRAMES = 150; // Stop checking after this many frames
 const unsigned long MESSAGE_DISPLAY_MS = 2000; // How long to show format success/fail message
+const unsigned long DRY_FIRE_RANDOM_DELAY_MIN_MS = 2000; // Min random delay for Dry Fire Par
+const unsigned long DRY_FIRE_RANDOM_DELAY_MAX_MS = 5000; // Max random delay for Dry Fire Par
+const int MAX_PAR_BEEPS = 10; // Maximum number of par beeps/times we can configure
+const unsigned long RECOIL_DETECTION_WINDOW_MS = 100; // Time (ms) after sound peak to check for recoil
+const unsigned long MIN_FIRST_SHOT_TIME_MS = 100; // <-- NEW: Minimum time for first shot registration
 
 // --- NVS Keys ---
 const char* NVS_NAMESPACE = "ShotTimer";
@@ -34,31 +39,36 @@ const char* KEY_BEEP_DUR = "beepDur";
 const char* KEY_BEEP_HZ = "beepHz";
 const char* KEY_SHOT_THRESH = "shotThresh";
 const char* KEY_DF_BEEP_CNT = "dfBeepCnt";
+// Dynamic keys for par times will be like "dfParT_0", "dfParT_1", etc.
 const char* KEY_NR_RECOIL = "nrRecoil";
 const char* KEY_PEAK_BATT = "peakBatt";
 const char* KEY_ROTATION = "rotation";
+const char* KEY_BOOT_ANIM = "bootAnim";
 
 // --- Timer States ---
 enum TimerState {
     BOOT_SCREEN,
-    BOOT_JPG_SEQUENCE, // State for JPG sequence
+    BOOT_JPG_SEQUENCE,
     MODE_SELECTION,
     LIVE_FIRE_READY,
     LIVE_FIRE_GET_READY,
     LIVE_FIRE_TIMING,
     LIVE_FIRE_STOPPED,
-    DRY_FIRE_MODE,
-    NOISY_RANGE_MODE,
+    DRY_FIRE_READY,
+    DRY_FIRE_RUNNING,
+    NOISY_RANGE_READY,
+    NOISY_RANGE_GET_READY,
+    NOISY_RANGE_TIMING,
     SETTINGS_MENU_MAIN,
     SETTINGS_MENU_GENERAL,
+    SETTINGS_MENU_BEEP,
     SETTINGS_MENU_DRYFIRE,
     SETTINGS_MENU_NOISY,
     DEVICE_STATUS,
     LIST_FILES,
     EDIT_SETTING,
     CALIBRATE_THRESHOLD,
-    CALIBRATE_RECOIL,
-    CONFIRM_FORMAT_LITTLEFS
+    CALIBRATE_RECOIL
 };
 
 // --- Operating Modes ---
@@ -76,8 +86,10 @@ enum EditableSetting {
     EDIT_BEEP_TONE,
     EDIT_SHOT_THRESHOLD,
     EDIT_PAR_BEEP_COUNT,
+    EDIT_PAR_TIME_ARRAY,
     EDIT_RECOIL_THRESHOLD,
-    EDIT_ROTATION
+    EDIT_ROTATION,
+    EDIT_BOOT_ANIM
 };
 
 // --- Global Variables ---
@@ -95,8 +107,10 @@ unsigned long currentBeepDuration = 150;
 int currentBeepToneHz = 2000;
 int shotThresholdRms = 15311;
 int dryFireParBeepCount = 3;
+float dryFireParTimesSec[MAX_PAR_BEEPS];
 float recoilThreshold = 1.5;
 int screenRotationSetting = 3;
+bool playBootAnimation = true;
 
 // Shot Data Arrays
 int shotCount = 0;
@@ -108,7 +122,7 @@ unsigned long lastDetectionTime = 0;
 // Menu Variables
 int currentMenuSelection = 0;
 int menuScrollOffset = 0;
-int settingsMenuLevel = 0;
+int settingsMenuLevel = 0; // 0=Main, 1=General, 2=DryFire, 3=Noisy, 4=Beep
 unsigned long btnTopPressTime = 0;
 bool btnTopHeld = false;
 bool redrawMenu = true;
@@ -118,6 +132,7 @@ EditableSetting settingBeingEdited = EDIT_NONE;
 int editingIntValue = 0;
 unsigned long editingULongValue = 0;
 float editingFloatValue = 0.0;
+bool editingBoolValue = false;
 const char* editingSettingName = "";
 
 // File List Variables
@@ -140,15 +155,29 @@ unsigned long lastBatteryCheckTime = 0;
 // Create an instance of the library
 M5MicPeakRMS micPeakRMS;
 
-// Buzzer Pin (External)
+// Buzzer Pins (External)
 #define BUZZER_PIN 25
+#define BUZZER_PIN_2 2
 
 // Boot Sequence Variables
 int currentJpgFrame = 1;
-bool filesystem_ok_for_boot = false; // Flag if LittleFS mounted correctly
+bool filesystem_ok_for_boot = false;
+unsigned long lastFrameTime = 0;
+
+// Dry Fire Par Variables
+unsigned long randomDelayStartMs = 0;
+unsigned long parTimerStartTime = 0;
+unsigned long beepSequenceStartTime = 0;
+int beepsPlayed = 0;
+unsigned long nextBeepTime = 0;
+unsigned long lastBeepTime = 0;
+
+// Noisy Range Variables
+unsigned long lastSoundPeakTime = 0;
+bool checkingForRecoil = false;
+float peakRecoilValue = 0.0;
 
 // --- Function Prototypes ---
-// (Keep all existing prototypes except printLittleFSFiles)
 void displayBootScreen(const char* line1a, const char* line1b, const char* line2);
 void displayMenu(const char* title, const char* items[], int count, int selection, int scrollOffset);
 void displayTimingScreen(float elapsedTime, int count, float lastSplit);
@@ -157,6 +186,8 @@ void displayEditScreen();
 void displayCalibrationScreen(const char* title, float peakValue, const char* unit);
 void displayDeviceStatusScreen();
 void displayListFilesScreen();
+void displayDryFireReadyScreen();
+void displayDryFireRunningScreen(bool waiting, int beepNum, int totalBeeps);
 void resetShotData();
 void loadSettings();
 void saveSettings();
@@ -172,11 +203,14 @@ void handleEditSettingInput();
 void handleDeviceStatusInput();
 void handleListFilesInput();
 void handleCalibrationInput(TimerState calibrationType);
-void handleConfirmFormatInput();
+void handleDryFireReadyInput();
+void handleDryFireRunning();
+void handleNoisyRangeReadyInput();
+void handleNoisyRangeGetReady();
+void handleNoisyRangeTiming();
 void setState(TimerState newState);
 String getUpButtonLabel();
 String getDownButtonLabel();
-// void printLittleFSFiles(); // <-- REMOVED prototype
 
 
 // --- Setup ---
@@ -190,7 +224,7 @@ void setup() {
 
     Serial.println("Initializing Preferences (NVS)...");
     preferences.begin(NVS_NAMESPACE, false);
-    loadSettings(); // Load saved settings (includes rotation)
+    loadSettings(); // Load saved settings
 
     // Apply loaded rotation setting
     StickCP2.Lcd.setRotation(screenRotationSetting);
@@ -205,6 +239,8 @@ void setup() {
 
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
+    pinMode(BUZZER_PIN_2, OUTPUT);
+    digitalWrite(BUZZER_PIN_2, LOW);
 
     Serial.println("Disabling Internal Speaker...");
     StickCP2.Speaker.end();
@@ -232,16 +268,15 @@ void setup() {
 
     // --- Initialize LittleFS (Required for JPG Sequence and File List) ---
     Serial.println("Initializing LittleFS...");
-    // Use LittleFS.begin() without true to avoid auto-formatting
     if(!LittleFS.begin()){
         Serial.println("!!! LittleFS Mount Failed! Check partition scheme or format manually.");
-        displayBootScreen("ERROR", "", "FS Failed!"); // Generic FS message
+        displayBootScreen("ERROR", "", "FS Failed!");
         playUnsuccessBeeps();
         delay(2000); // Show error briefly
-        filesystem_ok_for_boot = false; // Disable JPG sequence if FS fails
+        filesystem_ok_for_boot = false;
     } else {
         Serial.println("LittleFS Mounted.");
-        filesystem_ok_for_boot = true; // Filesystem is OK
+        filesystem_ok_for_boot = true;
     }
 
     peakBatteryVoltage = preferences.getFloat(KEY_PEAK_BATT, 4.2);
@@ -256,15 +291,16 @@ void setup() {
     delay(500);
 
     // --- Start Boot Sequence (JPG or direct to Mode Select) ---
-    if (filesystem_ok_for_boot) {
+    if (filesystem_ok_for_boot && playBootAnimation) {
         Serial.println("Starting JPG Boot Sequence...");
         setState(BOOT_JPG_SEQUENCE);
         currentJpgFrame = 1; // Start from frame 1.jpg
+        lastFrameTime = 0; // Initialize frame timer
         StickCP2.Lcd.fillScreen(BLACK); // Clear for sequence
     } else {
-        Serial.println("Filesystem failed, skipping boot sequence.");
+        if (!playBootAnimation) Serial.println("Boot animation disabled in settings.");
+        else Serial.println("Filesystem failed, skipping boot sequence.");
         delay(1000); // Show "Init Complete" longer if no sequence
-        // printLittleFSFiles(); // <-- REMOVED call
         setState(MODE_SELECTION); // Go directly to mode selection
         currentMenuSelection = (int)currentMode;
         menuScrollOffset = 0;
@@ -274,14 +310,15 @@ void setup() {
 
 // --- Main Loop ---
 void loop() {
-    StickCP2.update(); // Update StickCP2 components
+    StickCP2.update(); // Update StickCP2 components (critical for button reads)
 
     unsigned long currentTime = millis();
 
     // --- Update Mic Library (if needed by current state) ---
+    // Needed for Live Fire, Noisy Range (sound trigger), and Threshold Cal
     bool micUpdateNeeded = (currentState == LIVE_FIRE_TIMING ||
-                            currentState == CALIBRATE_THRESHOLD ||
-                            currentState == NOISY_RANGE_MODE);
+                            currentState == NOISY_RANGE_TIMING ||
+                            currentState == CALIBRATE_THRESHOLD);
     if (micUpdateNeeded) {
         micPeakRMS.update();
     }
@@ -290,7 +327,7 @@ void loop() {
     if (currentTime - lastBatteryCheckTime > BATTERY_CHECK_INTERVAL_MS) {
         checkBattery();
         // Force redraw if status screen is active and battery warning state changed
-        if (currentState == DEVICE_STATUS || currentState == LIST_FILES) {
+        if (currentState == DEVICE_STATUS || currentState == LIST_FILES || currentState == MODE_SELECTION) { // Redraw mode select too for battery %
              redrawMenu = true; // Force redraw on interval for status/list screens
         }
     }
@@ -303,11 +340,14 @@ void loop() {
         } else if (!btnTopHeld && (currentTime - btnTopPressTime > LONG_PRESS_DURATION_MS)) {
             // Only enter settings if not already in a settings-related state or boot sequence
             if (currentState != SETTINGS_MENU_MAIN && currentState != SETTINGS_MENU_GENERAL &&
+                currentState != SETTINGS_MENU_BEEP &&
                 currentState != SETTINGS_MENU_DRYFIRE && currentState != SETTINGS_MENU_NOISY &&
                 currentState != DEVICE_STATUS && currentState != LIST_FILES &&
                 currentState != EDIT_SETTING && currentState != CALIBRATE_THRESHOLD &&
-                currentState != CALIBRATE_RECOIL && currentState != CONFIRM_FORMAT_LITTLEFS && // Don't interrupt format confirm
-                currentState != BOOT_JPG_SEQUENCE) // Don't interrupt boot sequence
+                currentState != CALIBRATE_RECOIL &&
+                currentState != BOOT_JPG_SEQUENCE &&
+                currentState != DRY_FIRE_READY && currentState != DRY_FIRE_RUNNING &&
+                currentState != NOISY_RANGE_READY && currentState != NOISY_RANGE_GET_READY && currentState != NOISY_RANGE_TIMING) // Don't interrupt active timers
             {
                 btnTopHeld = true;
                 Serial.println("Top Button Long Press Detected - Entering Settings");
@@ -331,66 +371,56 @@ void loop() {
             {
                 if (currentState != BOOT_JPG_SEQUENCE) break; // Exit if state changed mid-logic
 
-                // Construct filename (e.g., /1.jpg, /2.jpg)
-                char jpgFilename[12];
-                sprintf(jpgFilename, "/%d.jpg", currentJpgFrame);
-
-                Serial.printf("Checking for: %s\n", jpgFilename);
-
-                if (LittleFS.exists(jpgFilename) && currentJpgFrame <= MAX_BOOT_JPG_FRAMES) {
-                    Serial.printf("Opening %s\n", jpgFilename);
-                    File jpgFile = LittleFS.open(jpgFilename, FILE_READ);
-
-                    if (!jpgFile) {
-                        Serial.printf("!!! Failed to open %s\n", jpgFilename);
-                        // Skip to end if file open fails
-                        // printLittleFSFiles(); // <-- REMOVED call
-                        setState(MODE_SELECTION);
-                        currentMenuSelection = (int)currentMode;
-                        menuScrollOffset = 0;
-                        StickCP2.Lcd.fillScreen(BLACK);
-                        break; // Exit case
-                    }
-
-                    Serial.printf("Displaying %s\n", jpgFilename);
-                    // Display the JPG from the File stream, centered and scaled to fit
-                    bool success = StickCP2.Lcd.drawJpg(&jpgFile, // Pass Stream pointer
-                                                        0, 0,     // x, y position (relative to datum)
-                                                        StickCP2.Lcd.width(), StickCP2.Lcd.height(), // Max width/height
-                                                        0, 0,     // Offset x, y (within image)
-                                                        0.0f, 0.0f, // Scale x, y (0.0 means scale to fit bounds)
-                                                        datum_t::middle_center); // Datum (center image on x,y)
-
-                    jpgFile.close(); // IMPORTANT: Close the file handle
-
-                    if (!success) {
-                        Serial.printf("!!! Failed to draw %s\n", jpgFilename);
-                        // Decide how to handle draw failure - skip to end?
-                        // printLittleFSFiles(); // <-- REMOVED call
-                        setState(MODE_SELECTION);
-                        currentMenuSelection = (int)currentMode;
-                        menuScrollOffset = 0;
-                        StickCP2.Lcd.fillScreen(BLACK);
-                        break; // Exit case
-                    }
-
-                    currentJpgFrame++; // Move to next frame
-                    delay(BOOT_JPG_FRAME_DELAY_MS); // Wait before showing next frame
-
-                } else {
-                    // File doesn't exist or max frames reached
-                    if (currentJpgFrame > MAX_BOOT_JPG_FRAMES) {
-                       Serial.println("Max boot frames reached.");
-                    } else {
-                       Serial.printf("%s not found.\n", jpgFilename);
-                    }
-                    Serial.println("Boot sequence finished.");
-                    // printLittleFSFiles(); // <-- REMOVED call
+                // --- Check for skip button press (runs every loop) ---
+                if (StickCP2.BtnA.wasClicked()) {
+                    Serial.println("Boot sequence skipped by user.");
                     setState(MODE_SELECTION);
                     currentMenuSelection = (int)currentMode;
                     menuScrollOffset = 0;
-                    StickCP2.Lcd.fillScreen(BLACK); // Clear screen after sequence
+                    StickCP2.Lcd.fillScreen(BLACK);
+                    break; // Exit case
                 }
+
+                // --- Check if it's time to display the next frame ---
+                if (currentTime - lastFrameTime >= BOOT_JPG_FRAME_DELAY_MS) {
+
+                    // Construct filename (e.g., /1.jpg, /2.jpg)
+                    char jpgFilename[12];
+                    sprintf(jpgFilename, "/%d.jpg", currentJpgFrame);
+
+                    if (LittleFS.exists(jpgFilename) && currentJpgFrame <= MAX_BOOT_JPG_FRAMES) {
+                        File jpgFile = LittleFS.open(jpgFilename, FILE_READ);
+                        if (!jpgFile) {
+                            Serial.printf("!!! Failed to open %s\n", jpgFilename);
+                            setState(MODE_SELECTION); // Go to mode selection on error
+                            break;
+                        }
+                        bool success = StickCP2.Lcd.drawJpg(&jpgFile, 0, 0, StickCP2.Lcd.width(), StickCP2.Lcd.height(), 0, 0, 0.0f, 0.0f, datum_t::middle_center);
+                        jpgFile.close();
+
+                        if (!success) {
+                            Serial.printf("!!! Failed to draw %s\n", jpgFilename);
+                            setState(MODE_SELECTION); // Go to mode selection on error
+                            break;
+                        }
+                        currentJpgFrame++;
+                        lastFrameTime = currentTime;
+                    } else {
+                        // File doesn't exist or max frames reached
+                        if (currentJpgFrame <= MAX_BOOT_JPG_FRAMES) { // Only print "not found" if we didn't hit the max
+                           Serial.printf("%s not found.\n", jpgFilename);
+                        } else {
+                           Serial.println("Max boot frames reached.");
+                        }
+                        Serial.println("Boot sequence finished.");
+                        setState(MODE_SELECTION);
+                    }
+                } // End time check
+                 if (currentState == MODE_SELECTION) { // If state changed, clear screen
+                    currentMenuSelection = (int)currentMode;
+                    menuScrollOffset = 0;
+                    StickCP2.Lcd.fillScreen(BLACK);
+                 }
             }
             break;
 
@@ -401,7 +431,7 @@ void loop() {
         // --- Live Fire Mode States ---
         case LIVE_FIRE_READY:
             if (redrawMenu) {
-                displayTimingScreen(0.0, 0, 0.0);
+                displayTimingScreen(0.0, 0, 0.0); // Use the standard timing screen display
                 redrawMenu = false;
             }
             if (StickCP2.BtnA.wasClicked()) {
@@ -412,7 +442,7 @@ void loop() {
                 StickCP2.Lcd.setTextFont(0);
                 StickCP2.Lcd.setTextSize(3);
                 StickCP2.Lcd.drawString("Ready...", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2);
-                delay(1000);
+                delay(1000); // Short delay for user readiness
             }
             break;
 
@@ -422,10 +452,11 @@ void loop() {
             delay(POST_BEEP_DELAY_MS); // Add delay after beep
             micPeakRMS.resetPeak();    // Reset peak immediately after beep/delay
             Serial.println("Beep finished, peak reset. Starting timer.");
-            startTime = millis(); // Use current time AFTER beep/delay
             resetShotData(); // Resets counts and overall peak level
+            startTime = millis(); // Set start time AFTER reset and delay
             lastDisplayUpdateTime = 0;
-            setState(LIVE_FIRE_TIMING);
+            StickCP2.Lcd.fillScreen(BLACK); // <-- Explicit clear before timing starts
+            setState(LIVE_FIRE_TIMING); // redrawMenu is set by setState
             break;
 
         case LIVE_FIRE_TIMING:
@@ -439,7 +470,7 @@ void loop() {
                     peakRMSOverall = currentCyclePeakRMS;
                 }
 
-                if (currentTime - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) {
+                if (redrawMenu || currentTime - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) { // Check redrawMenu here too
                     float lastSplit = (shotCount > 0) ? splitTimes[shotCount - 1] : 0.0;
                     displayTimingScreen(currentElapsedTime, shotCount, lastSplit);
                     lastDisplayUpdateTime = currentTime;
@@ -451,39 +482,50 @@ void loop() {
                     shotCount < currentMaxShots)
                 {
                     unsigned long shotTimeMillis = currentTime;
-                    lastDetectionTime = shotTimeMillis;
-                    shotTimestamps[shotCount] = shotTimeMillis;
 
-                    float currentSplit;
-                    if (shotCount == 0) {
-                        currentSplit = (shotTimeMillis - startTime) / 1000.0;
+                    // --- Ignore first shot if too soon ---
+                    if (shotCount == 0 && (shotTimeMillis - startTime) <= MIN_FIRST_SHOT_TIME_MS) {
+                        Serial.printf("Ignoring early first shot detected at %lu ms (Start: %lu ms)\n", shotTimeMillis, startTime);
+                        lastDetectionTime = currentTime; // Still update refractory timer
+                        micPeakRMS.resetPeak(); // Reset peak as it was likely the beep
                     } else {
-                        if (lastShotTimestamp > 0) {
-                           currentSplit = (shotTimeMillis - lastShotTimestamp) / 1000.0;
-                        } else { currentSplit = 0.0; }
+                        // --- Register the shot ---
+                        lastDetectionTime = shotTimeMillis;
+                        shotTimestamps[shotCount] = shotTimeMillis;
+
+                        float currentSplit;
+                        if (shotCount == 0) {
+                            currentSplit = (shotTimeMillis - startTime) / 1000.0;
+                        } else {
+                            if (lastShotTimestamp > 0) {
+                               currentSplit = (shotTimeMillis - lastShotTimestamp) / 1000.0;
+                            } else { currentSplit = 0.0; }
+                        }
+                        lastShotTimestamp = shotTimeMillis;
+                        splitTimes[shotCount] = currentSplit;
+
+                        Serial.printf("Shot %d Detected! Cycle PeakRMS: %.0f, Time: %.2fs, Split: %.2fs\n",
+                                      shotCount + 1, currentCyclePeakRMS, (shotTimeMillis - startTime)/1000.0, currentSplit);
+                        shotCount++;
+
+                        // Force immediate update of timing screen after shot
+                        redrawMenu = true;
+                        displayTimingScreen(currentElapsedTime, shotCount, currentSplit);
+                        lastDisplayUpdateTime = currentTime;
+
+                        if (shotCount >= currentMaxShots) {
+                            Serial.println("Max shots reached. Stopping timer.");
+                            setState(LIVE_FIRE_STOPPED);
+                            StickCP2.Lcd.fillScreen(BLACK);
+                            displayStoppedScreen();
+                            if (shotCount > 0) playSuccessBeeps(); else playUnsuccessBeeps();
+                        }
+                        micPeakRMS.resetPeak(); // Reset peak after processing a valid shot
                     }
-                    lastShotTimestamp = shotTimeMillis;
-                    splitTimes[shotCount] = currentSplit;
+                } else {
+                     micPeakRMS.resetPeak(); // Reset peak if no shot detected this cycle
+                }
 
-                    Serial.printf("Shot %d Detected! Cycle PeakRMS: %.0f, Time: %.2fs, Split: %.2fs\n",
-                                  shotCount + 1, currentCyclePeakRMS, (shotTimeMillis - startTime)/1000.0, currentSplit);
-                    shotCount++;
-
-                    // Force immediate update of timing screen after shot
-                    redrawMenu = true;
-                    displayTimingScreen(currentElapsedTime, shotCount, currentSplit);
-                    lastDisplayUpdateTime = currentTime;
-
-                    if (shotCount >= currentMaxShots) {
-                        Serial.println("Max shots reached. Stopping timer.");
-                        setState(LIVE_FIRE_STOPPED);
-                        StickCP2.Lcd.fillScreen(BLACK);
-                        displayStoppedScreen();
-                        if (shotCount > 0) playSuccessBeeps(); else playUnsuccessBeeps();
-                    }
-                } // End shot detection
-
-                micPeakRMS.resetPeak();
 
                 // Check for Stop Button Press (Manual Stop - Use wasClicked)
                 if (currentState == LIVE_FIRE_TIMING && StickCP2.BtnA.wasClicked()) {
@@ -497,7 +539,7 @@ void loop() {
                 // Check for Timeout
                 if (currentState == LIVE_FIRE_TIMING) {
                     unsigned long timeSinceEvent = (shotCount == 0) ? (currentTime - startTime) : (currentTime - lastShotTimestamp);
-                    bool hasStarted = (shotCount > 0 || startTime > 0); // Timer considered started if beep happened
+                    bool hasStarted = (startTime > 0); // Timer considered started if beep happened
 
                     if (hasStarted && timeSinceEvent > TIMEOUT_DURATION_MS) {
                         Serial.printf("Timeout reached (%s). Stopping timer.\n", (shotCount == 0) ? "no shots" : "after last shot");
@@ -517,53 +559,40 @@ void loop() {
             }
             if (StickCP2.BtnA.wasClicked()) {
                 Serial.println("Resetting timer...");
-                setState(LIVE_FIRE_READY);
+                // Determine which ready state to return to based on previous state
+                if (previousState == NOISY_RANGE_TIMING || previousState == NOISY_RANGE_GET_READY) {
+                     setState(NOISY_RANGE_READY);
+                } else {
+                     setState(LIVE_FIRE_READY);
+                }
                 StickCP2.Lcd.fillScreen(BLACK);
             }
             break;
 
-        // --- Placeholder Modes ---
-        case DRY_FIRE_MODE:
-            if (redrawMenu) {
-                StickCP2.Lcd.fillScreen(BLACK);
-                StickCP2.Lcd.setTextDatum(MC_DATUM);
-                StickCP2.Lcd.drawString("Dry Fire Mode", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2 - 10);
-                StickCP2.Lcd.setTextSize(1);
-                StickCP2.Lcd.drawString("(Not Implemented)", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2 + 10);
-                StickCP2.Lcd.drawString("Hold Front to Return", StickCP2.Lcd.width()/2, StickCP2.Lcd.height() - 20);
-                drawLowBatteryIndicator();
-                redrawMenu = false;
-            }
-            if(StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
-                setState(MODE_SELECTION);
-                 currentMenuSelection = (int)currentMode;
-                 menuScrollOffset = 0;
-                 StickCP2.Lcd.fillScreen(BLACK);
-            }
+        // --- Dry Fire Par Mode States ---
+        case DRY_FIRE_READY:
+            handleDryFireReadyInput();
             break;
 
-        case NOISY_RANGE_MODE:
-            if (redrawMenu) {
-                StickCP2.Lcd.fillScreen(BLACK);
-                StickCP2.Lcd.setTextDatum(MC_DATUM);
-                StickCP2.Lcd.drawString("Noisy Range Mode", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2 - 10);
-                StickCP2.Lcd.setTextSize(1);
-                StickCP2.Lcd.drawString("(Not Implemented)", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2 + 10);
-                StickCP2.Lcd.drawString("Hold Front to Return", StickCP2.Lcd.width()/2, StickCP2.Lcd.height() - 20);
-                drawLowBatteryIndicator();
-                redrawMenu = false;
-            }
-            if(StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
-                setState(MODE_SELECTION);
-                 currentMenuSelection = (int)currentMode;
-                 menuScrollOffset = 0;
-                 StickCP2.Lcd.fillScreen(BLACK);
-            }
+        case DRY_FIRE_RUNNING:
+            handleDryFireRunning();
+            break;
+
+        // --- Noisy Range Mode States ---
+        case NOISY_RANGE_READY:
+            handleNoisyRangeReadyInput();
+            break;
+        case NOISY_RANGE_GET_READY:
+            handleNoisyRangeGetReady();
+            break;
+        case NOISY_RANGE_TIMING:
+            handleNoisyRangeTiming();
             break;
 
         // --- Settings States ---
         case SETTINGS_MENU_MAIN:
         case SETTINGS_MENU_GENERAL:
+        case SETTINGS_MENU_BEEP: // <-- Added case
         case SETTINGS_MENU_DRYFIRE:
         case SETTINGS_MENU_NOISY:
             handleSettingsInput();
@@ -589,9 +618,9 @@ void loop() {
             handleCalibrationInput(CALIBRATE_RECOIL);
             break;
 
-        case CONFIRM_FORMAT_LITTLEFS: // <-- RENAMED case
-            handleConfirmFormatInput();
-            break;
+        // case CONFIRM_FORMAT_LITTLEFS: // <-- REMOVED case
+        //     handleConfirmFormatInput();
+        //     break;
 
     } // End switch(currentState)
 
@@ -609,7 +638,7 @@ void setState(TimerState newState) {
     if (currentState != newState) {
         previousState = currentState;
         currentState = newState;
-        redrawMenu = true;
+        redrawMenu = true; // Always flag redraw on state change
         Serial.printf("State changed from %d to %d\n", previousState, currentState);
     }
 }
@@ -670,7 +699,17 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
     StickCP2.Lcd.setTextSize(2);
     StickCP2.Lcd.drawString(title, StickCP2.Lcd.width() / 2, 10);
 
-    StickCP2.Lcd.setTextDatum(TL_DATUM);
+    // --- Draw Battery Percentage (Only on Mode Select Screen) ---
+    if (strcmp(title, "Select Mode") == 0) {
+        StickCP2.Lcd.setTextDatum(TR_DATUM); // Top Right alignment
+        StickCP2.Lcd.setTextFont(0);
+        StickCP2.Lcd.setTextSize(1);
+        int batt_pct = StickCP2.Power.getBatteryLevel();
+        StickCP2.Lcd.setTextColor(WHITE, BLACK); // Ensure correct color
+        StickCP2.Lcd.drawString(String(batt_pct) + "%", StickCP2.Lcd.width() - 5, 5);
+    }
+
+    StickCP2.Lcd.setTextDatum(TL_DATUM); // Reset datum for menu items
     int y_pos = 45;
     int rotation = StickCP2.Lcd.getRotation();
     int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
@@ -685,15 +724,20 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
     for (int i = startIdx; i < endIdx; ++i) {
         int display_y = y_pos + (i - startIdx) * itemHeight;
 
-        String itemText = items[i];
-        // Display current value next to the setting name
-        if (settingsMenuLevel > 0 && strcmp(items[i], "Back") != 0 &&
-            strcmp(items[i], "Calibrate Thresh.") != 0 &&
-            strcmp(items[i], "Calibrate Recoil") != 0 &&
-            strcmp(items[i], "Device Status") != 0 &&
-            strcmp(items[i], "List Files") != 0 &&
-            strcmp(items[i], "Format LittleFS") != 0) // Don't show value for Format <-- UPDATED
-        {
+        String itemText = items[i]; // Get the base item text
+
+        // --- Display current value next to the setting name ---
+        bool isNavOrAction = (strcmp(items[i], "Back") == 0 ||
+                              strcmp(items[i], "Calibrate Thresh.") == 0 ||
+                              strcmp(items[i], "Calibrate Recoil") == 0 ||
+                              strcmp(items[i], "Device Status") == 0 ||
+                              strcmp(items[i], "List Files") == 0 ||
+                              strcmp(items[i], "Beep Settings") == 0); // Don't show value for sub-menu entry
+
+        bool isParTimeSetting = (settingsMenuLevel == 2 && strncmp(items[i], "Par Time", 8) == 0);
+
+        // Show value only if it's a setting in a sub-menu (level > 0) AND not a navigation/action item
+        if (settingsMenuLevel > 0 && !isNavOrAction && !isParTimeSetting) {
             itemText += ": ";
             if (strcmp(items[i], "Max Shots") == 0) itemText += currentMaxShots;
             else if (strcmp(items[i], "Beep Duration") == 0) itemText += currentBeepDuration;
@@ -702,8 +746,11 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
             else if (strcmp(items[i], "Par Beep Count") == 0) itemText += dryFireParBeepCount;
             else if (strcmp(items[i], "Recoil Threshold") == 0) itemText += String(recoilThreshold, 1);
             else if (strcmp(items[i], "Screen Rotation") == 0) itemText += screenRotationSetting;
+            else if (strcmp(items[i], "Boot Animation") == 0) itemText += (playBootAnimation ? "On" : "Off");
         }
+        // Note: The value for Par Time X is already included in the dynamically generated itemText
 
+        // --- Highlight and Draw ---
         if (i == selection) {
             StickCP2.Lcd.setTextColor(BLACK, WHITE);
             StickCP2.Lcd.fillRect(5, display_y - 2, StickCP2.Lcd.width() - 10, (textSize == 1 ? 14 : 20), WHITE);
@@ -722,7 +769,8 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
         StickCP2.Lcd.fillTriangle(StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 5, StickCP2.Lcd.width() / 2 - 5, StickCP2.Lcd.height() - 10, StickCP2.Lcd.width() / 2 + 5, StickCP2.Lcd.height() - 10, WHITE);
     }
 
-    drawLowBatteryIndicator();
+    drawLowBatteryIndicator(); // Draw low battery indicator if needed (separate from percentage)
+    StickCP2.Lcd.setTextDatum(TL_DATUM); // Reset datum just in case
 }
 
 /**
@@ -767,8 +815,8 @@ void handleModeSelectionInput() {
         Serial.printf("Mode Selected: %d\n", currentMode);
         switch (currentMode) {
             case MODE_LIVE_FIRE:   setState(LIVE_FIRE_READY); break;
-            case MODE_DRY_FIRE:    setState(DRY_FIRE_MODE); break;
-            case MODE_NOISY_RANGE: setState(NOISY_RANGE_MODE); break;
+            case MODE_DRY_FIRE:    setState(DRY_FIRE_READY); break;
+            case MODE_NOISY_RANGE: setState(NOISY_RANGE_READY); break;
         }
         StickCP2.Lcd.fillScreen(BLACK);
         menuScrollOffset = 0;
@@ -780,26 +828,64 @@ void handleModeSelectionInput() {
  */
 void handleSettingsInput() {
     const char* title = "Settings";
-    const char** items = nullptr;
+    const char** items = nullptr; // This will point to a temporary buffer for dynamic menus
     int itemCount = 0;
     int rotation = StickCP2.Lcd.getRotation();
     int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
 
-
-    // Add "Format LittleFS" to main menu
-    static const char* mainItems[] = {"General", "Dry Fire", "Noisy Range", "Device Status", "List Files", "Format LittleFS", "Save & Exit"}; // <-- UPDATED
-    static const char* generalItems[] = {"Max Shots", "Beep Duration", "Beep Tone", "Shot Threshold", "Screen Rotation", "Calibrate Thresh.", "Back"};
-    static const char* dryFireItems[] = {"Par Beep Count", "Back"};
+    // --- Static Menu Definitions ---
+    static const char* mainItems[] = {"General", "Dry Fire", "Noisy Range", "Device Status", "List Files", "Save & Exit"};
+    static const char* generalItems[] = {"Max Shots", "Beep Settings", "Shot Threshold", "Screen Rotation", "Boot Animation", "Calibrate Thresh.", "Back"}; // <-- Changed Beep options
+    static const char* beepItems[] = {"Beep Duration", "Beep Tone", "Back"}; // <-- NEW Beep Submenu
     static const char* noisyItems[] = {"Recoil Threshold", "Calibrate Recoil", "Back"};
 
+    // --- Dynamic Menu Buffer (for Dry Fire) ---
+    const int maxDryFireItems = 1 + MAX_PAR_BEEPS + 1;
+    static const char* dryFireItemsBuffer[maxDryFireItems];
+    static String dryFireItemStrings[MAX_PAR_BEEPS];
+
     switch (settingsMenuLevel) {
-        case 0: items = mainItems; itemCount = sizeof(mainItems) / sizeof(mainItems[0]); title = "Settings"; break;
-        case 1: items = generalItems; itemCount = sizeof(generalItems) / sizeof(generalItems[0]); title = "General Settings"; break;
-        case 2: items = dryFireItems; itemCount = sizeof(dryFireItems) / sizeof(dryFireItems[0]); title = "Dry Fire Settings"; break;
-        case 3: items = noisyItems; itemCount = sizeof(noisyItems) / sizeof(noisyItems[0]); title = "Noisy Range Settings"; break;
+        case 0: // Main Menu
+            items = mainItems;
+            itemCount = sizeof(mainItems) / sizeof(mainItems[0]);
+            title = "Settings";
+            break;
+        case 1: // General Settings
+            items = generalItems;
+            itemCount = sizeof(generalItems) / sizeof(generalItems[0]);
+            title = "General Settings";
+            break;
+        case 2: // Dry Fire Menu (Dynamic)
+            title = "Dry Fire Settings";
+            itemCount = 0; // Reset count
+            // 1. Add "Par Beep Count"
+            dryFireItemsBuffer[itemCount++] = "Par Beep Count";
+            // 2. Add "Par Time X" for each beep up to the current count
+            for (int i = 0; i < dryFireParBeepCount && i < MAX_PAR_BEEPS; ++i) {
+                dryFireItemStrings[i] = "Par Time " + String(i + 1) + ": " + String(dryFireParTimesSec[i], 1) + "s";
+                dryFireItemsBuffer[itemCount++] = dryFireItemStrings[i].c_str();
+            }
+            // 3. Add "Back"
+            dryFireItemsBuffer[itemCount++] = "Back";
+            items = dryFireItemsBuffer;
+            break;
+        case 3: // Noisy Range Settings
+            items = noisyItems;
+            itemCount = sizeof(noisyItems) / sizeof(noisyItems[0]);
+            title = "Noisy Range Settings";
+            break;
+        case 4: // Beep Settings <-- NEW Level
+             items = beepItems;
+             itemCount = sizeof(beepItems) / sizeof(beepItems[0]);
+             title = "Beep Settings";
+             break;
     }
 
     // Adjust scroll offset
+    if (currentMenuSelection >= itemCount) {
+        currentMenuSelection = max(0, itemCount - 1);
+        redrawMenu = true;
+    }
     if (currentMenuSelection < menuScrollOffset) {
         menuScrollOffset = currentMenuSelection; redrawMenu = true;
     } else if (currentMenuSelection >= menuScrollOffset + itemsPerScreen) {
@@ -832,9 +918,12 @@ void handleSettingsInput() {
              Serial.println("Returning to Mode Selection from Settings");
              setState(MODE_SELECTION); currentMenuSelection = (int)currentMode; menuScrollOffset = 0;
              StickCP2.Lcd.fillScreen(BLACK);
-         } else {
+         } else if (settingsMenuLevel == 1 || settingsMenuLevel == 2 || settingsMenuLevel == 3) { // General, Dry, Noisy return to Main
              Serial.println("Returning to Main Settings Menu");
              settingsMenuLevel = 0; currentMenuSelection = 0; menuScrollOffset = 0; redrawMenu = true;
+         } else if (settingsMenuLevel == 4) { // Beep Settings return to General
+             Serial.println("Returning to General Settings Menu");
+             settingsMenuLevel = 1; currentMenuSelection = 1; /* Index of Beep Settings */ menuScrollOffset = 0; redrawMenu = true;
          }
          return;
     }
@@ -855,9 +944,9 @@ void handleSettingsInput() {
             else if (strcmp(items[currentMenuSelection], "List Files") == 0) {
                 setState(LIST_FILES); fileListScrollOffset = 0; needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             }
-            else if (strcmp(items[currentMenuSelection], "Format LittleFS") == 0) { // <-- UPDATED Action
-                setState(CONFIRM_FORMAT_LITTLEFS); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
-            }
+            // else if (strcmp(items[currentMenuSelection], "Format LittleFS") == 0) { // REMOVED
+            //     setState(CONFIRM_FORMAT_LITTLEFS); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            // }
             else if (strcmp(items[currentMenuSelection], "Save & Exit") == 0) {
                 saveSettings(); playSuccessBeeps(); setState(MODE_SELECTION);
                 currentMenuSelection = (int)currentMode; menuScrollOffset = 0; needsActionRedraw = false;
@@ -870,14 +959,14 @@ void handleSettingsInput() {
             stateBeforeEdit = SETTINGS_MENU_GENERAL;
             if (strcmp(editingSettingName, "Max Shots") == 0) {
                 settingBeingEdited = EDIT_MAX_SHOTS; editingIntValue = currentMaxShots; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
-            } else if (strcmp(editingSettingName, "Beep Duration") == 0) {
-                settingBeingEdited = EDIT_BEEP_DURATION; editingULongValue = currentBeepDuration; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
-            } else if (strcmp(editingSettingName, "Beep Tone") == 0) {
-                settingBeingEdited = EDIT_BEEP_TONE; editingIntValue = currentBeepToneHz; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            } else if (strcmp(editingSettingName, "Beep Settings") == 0) { // <-- Navigate to Beep Menu
+                settingsMenuLevel = 4; currentMenuSelection = 0; menuScrollOffset = 0;
             } else if (strcmp(editingSettingName, "Shot Threshold") == 0) {
                 settingBeingEdited = EDIT_SHOT_THRESHOLD; editingIntValue = shotThresholdRms; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Screen Rotation") == 0) {
                 settingBeingEdited = EDIT_ROTATION; editingIntValue = screenRotationSetting; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            } else if (strcmp(editingSettingName, "Boot Animation") == 0) {
+                settingBeingEdited = EDIT_BOOT_ANIM; editingBoolValue = playBootAnimation; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Calibrate Thresh.") == 0) {
                 setState(CALIBRATE_THRESHOLD); peakRMSOverall = 0; micPeakRMS.resetPeak(); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Back") == 0) {
@@ -885,11 +974,26 @@ void handleSettingsInput() {
             }
         }
         else if (settingsMenuLevel == 2) { // Dry Fire Settings
-            editingSettingName = items[currentMenuSelection];
             stateBeforeEdit = SETTINGS_MENU_DRYFIRE;
-            if (strcmp(editingSettingName, "Par Beep Count") == 0) {
+            if (strcmp(items[currentMenuSelection], "Par Beep Count") == 0) {
+                editingSettingName = items[currentMenuSelection];
                 settingBeingEdited = EDIT_PAR_BEEP_COUNT; editingIntValue = dryFireParBeepCount; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
-            } else if (strcmp(editingSettingName, "Back") == 0) {
+            } else if (strncmp(items[currentMenuSelection], "Par Time", 8) == 0) { // Check if it's a "Par Time X" item
+                int parTimeIndex = currentMenuSelection - 1; // Index in the array (0-based)
+                if (parTimeIndex >= 0 && parTimeIndex < dryFireParBeepCount) {
+                    String tempTitle = "Par Time " + String(parTimeIndex + 1);
+                    static char parTimeEditTitle[20];
+                    strncpy(parTimeEditTitle, tempTitle.c_str(), sizeof(parTimeEditTitle) - 1);
+                    parTimeEditTitle[sizeof(parTimeEditTitle) - 1] = '\0';
+                    editingSettingName = parTimeEditTitle;
+                    settingBeingEdited = EDIT_PAR_TIME_ARRAY;
+                    editingIntValue = parTimeIndex;
+                    editingFloatValue = dryFireParTimesSec[parTimeIndex];
+                    setState(EDIT_SETTING);
+                    needsActionRedraw = false;
+                    StickCP2.Lcd.fillScreen(BLACK);
+                }
+            } else if (strcmp(items[currentMenuSelection], "Back") == 0) {
                 settingsMenuLevel = 0; currentMenuSelection = 0; menuScrollOffset = 0;
             }
         }
@@ -899,9 +1003,20 @@ void handleSettingsInput() {
             if (strcmp(editingSettingName, "Recoil Threshold") == 0) {
                 settingBeingEdited = EDIT_RECOIL_THRESHOLD; editingFloatValue = recoilThreshold; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Calibrate Recoil") == 0) {
-                setState(CALIBRATE_RECOIL); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+                setState(CALIBRATE_RECOIL); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK); peakRecoilValue = 0; // Reset peak for calibration
             } else if (strcmp(editingSettingName, "Back") == 0) {
                 settingsMenuLevel = 0; currentMenuSelection = 0; menuScrollOffset = 0;
+            }
+        }
+        else if (settingsMenuLevel == 4) { // Beep Settings <-- NEW
+            editingSettingName = items[currentMenuSelection];
+            stateBeforeEdit = SETTINGS_MENU_BEEP; // Set correct return state
+             if (strcmp(editingSettingName, "Beep Duration") == 0) {
+                settingBeingEdited = EDIT_BEEP_DURATION; editingULongValue = currentBeepDuration; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            } else if (strcmp(editingSettingName, "Beep Tone") == 0) {
+                settingBeingEdited = EDIT_BEEP_TONE; editingIntValue = currentBeepToneHz; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            } else if (strcmp(editingSettingName, "Back") == 0) {
+                settingsMenuLevel = 1; currentMenuSelection = 1; /* Index of Beep Settings */ menuScrollOffset = 0;
             }
         }
         if (needsActionRedraw) redrawMenu = true;
@@ -919,17 +1034,28 @@ void handleEditSettingInput() {
     bool upPressed = (rotation == 3) ? M5.BtnPWR.wasClicked() : StickCP2.BtnB.wasClicked();
     bool downPressed = (rotation == 3) ? StickCP2.BtnB.wasClicked() : M5.BtnPWR.wasClicked();
 
-    if (upPressed) { // Up Action
+    if (upPressed || downPressed) { // Handle both up and down presses
         valueChanged = true;
-        if(rotation == 3) Serial.println("Bottom (BtnPWR) Click Detected for Edit Up (Rotation 3)");
+        if (upPressed) {
+           if(rotation == 3) Serial.println("Bottom (BtnPWR) Click Detected for Edit Up (Rotation 3)");
+        } else {
+           if(rotation != 3) Serial.println("Bottom (BtnPWR) Click Detected for Edit Down");
+           else Serial.println("Top (BtnB) Click Detected for Edit Down (Rotation 3)");
+        }
+
         switch(settingBeingEdited) {
-            case EDIT_MAX_SHOTS: editingIntValue = min(editingIntValue + 1, MAX_SHOTS_LIMIT); break;
-            case EDIT_BEEP_DURATION: editingULongValue = min(editingULongValue + 50, 2000UL); break;
-            case EDIT_BEEP_TONE: editingIntValue = min(editingIntValue + 100, 8000); break;
-            case EDIT_SHOT_THRESHOLD: editingIntValue = min(editingIntValue + 500, 32000); break;
-            case EDIT_PAR_BEEP_COUNT: editingIntValue = min(editingIntValue + 1, 10); break;
-            case EDIT_RECOIL_THRESHOLD: editingFloatValue = min(editingFloatValue + 0.1f, 5.0f); break;
-            case EDIT_ROTATION: editingIntValue = (editingIntValue + 1) % 4; break; // Cycle 0-3
+            case EDIT_MAX_SHOTS: editingIntValue = min(editingIntValue + (upPressed ? 1 : -1), MAX_SHOTS_LIMIT); if(editingIntValue < 1) editingIntValue=1; break;
+            case EDIT_BEEP_DURATION: editingULongValue = min(editingULongValue + (upPressed ? 50 : -50), 2000UL); if(editingULongValue < 50) editingULongValue=50; break;
+            case EDIT_BEEP_TONE: editingIntValue = min(editingIntValue + (upPressed ? 100 : -100), 8000); if(editingIntValue < 500) editingIntValue=500; break;
+            case EDIT_SHOT_THRESHOLD: editingIntValue = min(editingIntValue + (upPressed ? 500 : -500), 32000); if(editingIntValue < 100) editingIntValue=100; break;
+            case EDIT_PAR_BEEP_COUNT:
+                editingIntValue = min(editingIntValue + (upPressed ? 1 : -1), MAX_PAR_BEEPS); // Use MAX_PAR_BEEPS as limit
+                if(editingIntValue < 1) editingIntValue=1;
+                break;
+            case EDIT_PAR_TIME_ARRAY: editingFloatValue = min(editingFloatValue + (upPressed ? 0.1f : -0.1f), 10.0f); if(editingFloatValue < 0.1f) editingFloatValue=0.1f; break; // Edit Par Time
+            case EDIT_RECOIL_THRESHOLD: editingFloatValue = min(editingFloatValue + (upPressed ? 0.1f : -0.1f), 5.0f); if(editingFloatValue < 0.5f) editingFloatValue=0.5f; break;
+            case EDIT_ROTATION: editingIntValue = (editingIntValue + (upPressed ? 1 : -1) + 4) % 4; break; // Cycle 0-3
+            case EDIT_BOOT_ANIM: editingBoolValue = !editingBoolValue; break; // Toggle boolean
             default: valueChanged = false; break;
         }
         // Apply rotation change immediately
@@ -938,26 +1064,7 @@ void handleEditSettingInput() {
             redrawMenu = true; // Force redraw after rotation change
         }
     }
-    if (downPressed) { // Down Action
-        valueChanged = true;
-        if(rotation != 3) Serial.println("Bottom (BtnPWR) Click Detected for Edit Down");
-        else Serial.println("Top (BtnB) Click Detected for Edit Down (Rotation 3)");
-        switch(settingBeingEdited) {
-            case EDIT_MAX_SHOTS: editingIntValue = max(editingIntValue - 1, 1); break;
-            case EDIT_BEEP_DURATION: editingULongValue = (editingULongValue <= 50) ? 50 : editingULongValue - 50; break;
-            case EDIT_BEEP_TONE: editingIntValue = max(editingIntValue - 100, 500); break;
-            case EDIT_SHOT_THRESHOLD: editingIntValue = max(editingIntValue - 500, 100); break;
-            case EDIT_PAR_BEEP_COUNT: editingIntValue = max(editingIntValue - 1, 1); break;
-            case EDIT_RECOIL_THRESHOLD: editingFloatValue = max(editingFloatValue - 0.1f, 0.5f); break;
-            case EDIT_ROTATION: editingIntValue = (editingIntValue - 1 + 4) % 4; break; // Cycle 0-3
-            default: valueChanged = false; break;
-        }
-         // Apply rotation change immediately
-        if (settingBeingEdited == EDIT_ROTATION) {
-            StickCP2.Lcd.setRotation(editingIntValue);
-            redrawMenu = true; // Force redraw after rotation change
-        }
-    }
+
 
     // Return/Cancel (Hold Front)
     if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
@@ -982,8 +1089,14 @@ void handleEditSettingInput() {
             case EDIT_BEEP_TONE: currentBeepToneHz = editingIntValue; break;
             case EDIT_SHOT_THRESHOLD: shotThresholdRms = editingIntValue; break;
             case EDIT_PAR_BEEP_COUNT: dryFireParBeepCount = editingIntValue; break;
+            case EDIT_PAR_TIME_ARRAY:
+                if (editingIntValue >= 0 && editingIntValue < MAX_PAR_BEEPS) { // editingIntValue holds the index
+                    dryFireParTimesSec[editingIntValue] = editingFloatValue;
+                }
+                break;
             case EDIT_RECOIL_THRESHOLD: recoilThreshold = editingFloatValue; break;
             case EDIT_ROTATION: screenRotationSetting = editingIntValue; break; // Save confirmed rotation
+            case EDIT_BOOT_ANIM: playBootAnimation = editingBoolValue; break;
             default: break;
         }
         setState(stateBeforeEdit);
@@ -1005,20 +1118,30 @@ void handleEditSettingInput() {
 void displayEditScreen() {
     // Optimized: Only clear the value area if not a full redraw
     if (!redrawMenu) {
-         // Clear larger area for Font 7
+         // Clear larger area for Font 7 or On/Off text
          StickCP2.Lcd.fillRect(0, StickCP2.Lcd.height()/2 - 25, StickCP2.Lcd.width(), 50, BLACK);
     } else {
         StickCP2.Lcd.fillScreen(BLACK);
         StickCP2.Lcd.setTextDatum(TC_DATUM);
         StickCP2.Lcd.setTextFont(0);
         StickCP2.Lcd.setTextSize(2);
-        StickCP2.Lcd.drawString(editingSettingName, StickCP2.Lcd.width() / 2, 15);
+        // Use specific title for Par Time array editing
+        if (settingBeingEdited == EDIT_PAR_TIME_ARRAY) {
+             String titleStr = "Par Time " + String(editingIntValue + 1); // editingIntValue holds index (0-based)
+             StickCP2.Lcd.drawString(titleStr, StickCP2.Lcd.width() / 2, 15);
+        } else {
+            StickCP2.Lcd.drawString(editingSettingName, StickCP2.Lcd.width() / 2, 15);
+        }
         // Instructions only need to be drawn once
         StickCP2.Lcd.setTextDatum(BC_DATUM);
         StickCP2.Lcd.setTextFont(0);
         StickCP2.Lcd.setTextSize(1);
         // Use helper functions for dynamic button labels
-        StickCP2.Lcd.drawString(getUpButtonLabel() + "=Up / " + getDownButtonLabel() + "=Down", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
+        if (settingBeingEdited == EDIT_BOOT_ANIM) { // Special instructions for toggle
+            StickCP2.Lcd.drawString(getUpButtonLabel() + " or " + getDownButtonLabel() + " = Toggle", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
+        } else {
+            StickCP2.Lcd.drawString(getUpButtonLabel() + "=Up / " + getDownButtonLabel() + "=Down", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
+        }
         StickCP2.Lcd.drawString("Press=OK / Hold=Cancel", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 10);
     }
 
@@ -1033,8 +1156,10 @@ void displayEditScreen() {
         case EDIT_BEEP_TONE: StickCP2.Lcd.drawNumber(editingIntValue, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
         case EDIT_SHOT_THRESHOLD: StickCP2.Lcd.drawNumber(editingIntValue, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
         case EDIT_PAR_BEEP_COUNT: StickCP2.Lcd.drawNumber(editingIntValue, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
+        case EDIT_PAR_TIME_ARRAY: StickCP2.Lcd.drawFloat(editingFloatValue, 1, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break; // Show Par Time value
         case EDIT_RECOIL_THRESHOLD: StickCP2.Lcd.drawFloat(editingFloatValue, 1, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
         case EDIT_ROTATION: StickCP2.Lcd.drawNumber(editingIntValue, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
+        case EDIT_BOOT_ANIM: StickCP2.Lcd.drawString(editingBoolValue ? "On" : "Off", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break; // Show Boot Anim
         default: StickCP2.Lcd.drawString("ERROR", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); break;
     }
 
@@ -1048,40 +1173,42 @@ void displayEditScreen() {
 void handleCalibrationInput(TimerState calibrationType) {
     static float prevPeakValue = -1.0; // Track previous peak to reduce redraws
     float currentValue = 0.0;
-    float peakValue = 0.0;
+    // float peakValue = 0.0; // Use peakRMSOverall or peakRecoilValue directly
     const char* title = "Calibrating...";
     const char* unit = "";
-    bool peakChanged = false;
+    bool valueChanged = false; // Flag to force redraw if value changes
     int rotation = StickCP2.Lcd.getRotation(); // Get rotation for menu item calculation
     int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
-
+    float accX, accY, accZ; // For IMU readings
 
     // --- Get Current Values ---
     if (calibrationType == CALIBRATE_THRESHOLD) {
         title = "Calibrate Threshold";
         unit = "RMS";
         currentValue = micPeakRMS.getPeakRMS();
-        if (currentValue > peakRMSOverall) { peakRMSOverall = currentValue; }
-        peakValue = peakRMSOverall;
-        // Check if peak changed significantly enough for redraw
-        if (abs(peakValue - prevPeakValue) > 0.1) {
-            peakChanged = true;
-            prevPeakValue = peakValue;
-        }
-        micPeakRMS.resetPeak();
+        if (currentValue > peakRMSOverall) {
+            peakRMSOverall = currentValue;
+            valueChanged = true; // Update peak value display
+            }
+        // peakValue = peakRMSOverall; // Use peakRMSOverall directly
+        micPeakRMS.resetPeak(); // Reset for next cycle
     } else if (calibrationType == CALIBRATE_RECOIL) {
         title = "Calibrate Recoil";
         unit = "G";
-        // TODO: Read IMU data
-        currentValue = 0.0; peakValue = 0.0;
-        // if (peak changed) { peakChanged = true; prevPeakValue = peakValue; }
+        StickCP2.Imu.getAccelData(&accX, &accY, &accZ);
+        currentValue = abs(accZ); // Use absolute Z-axis acceleration
+        if (currentValue > peakRecoilValue) {
+            peakRecoilValue = currentValue;
+            valueChanged = true; // Update peak value display
+        }
+        // peakValue = peakRecoilValue; // Use peakRecoilValue directly
     }
 
     // --- Redraw Screen Only If Needed ---
-    if (redrawMenu || peakChanged) {
-        // Only clear the peak value area if just the peak changed
-        if (!redrawMenu && peakChanged) {
-             StickCP2.Lcd.fillRect(0, StickCP2.Lcd.height() / 2 - 15, StickCP2.Lcd.width(), 30, BLACK); // Clear old peak area
+    if (redrawMenu || valueChanged) {
+        // Only clear the value area if just the value changed
+        if (!redrawMenu && valueChanged) {
+             StickCP2.Lcd.fillRect(0, StickCP2.Lcd.height() / 2 - 25, StickCP2.Lcd.width(), 50, BLACK); // Clear old value area
         } else { // Full redraw on entering state (redrawMenu == true)
             StickCP2.Lcd.fillScreen(BLACK);
             StickCP2.Lcd.setTextDatum(TC_DATUM); StickCP2.Lcd.setTextFont(0); StickCP2.Lcd.setTextSize(2);
@@ -1091,14 +1218,23 @@ void handleCalibrationInput(TimerState calibrationType) {
             StickCP2.Lcd.drawString("Press Front=Save Peak", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
             StickCP2.Lcd.drawString("Hold Front=Cancel", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 10);
             if (calibrationType == CALIBRATE_RECOIL) {
-                 StickCP2.Lcd.drawString("(Not Implemented)", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
+                 StickCP2.Lcd.drawString("Trigger Recoil", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
+            } else {
+                 StickCP2.Lcd.drawString("Make Loud Noise", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
             }
         }
 
-        // Draw Peak Value (always update this part if peakChanged or redrawMenu)
-        StickCP2.Lcd.setTextDatum(MC_DATUM); StickCP2.Lcd.setTextFont(7); StickCP2.Lcd.setTextSize(1);
-        String peakStr = "PEAK: " + String((int)peakValue);
-        StickCP2.Lcd.drawString(peakStr, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2); // Centered vertically
+        // Draw Current and Peak Values
+        StickCP2.Lcd.setTextDatum(MC_DATUM);
+        StickCP2.Lcd.setTextFont(0); // Use smaller font
+        StickCP2.Lcd.setTextSize(1);
+        String currentStr = "Current: " + String(currentValue, (calibrationType == CALIBRATE_RECOIL ? 2 : 0)) + " " + unit;
+        StickCP2.Lcd.drawString(currentStr, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 - 10);
+
+        StickCP2.Lcd.setTextFont(7); // Use large font for peak
+        StickCP2.Lcd.setTextSize(1);
+        String peakStr = "PEAK: " + String((calibrationType == CALIBRATE_RECOIL ? peakRecoilValue : peakRMSOverall), (calibrationType == CALIBRATE_RECOIL ? 2 : 0));
+        StickCP2.Lcd.drawString(peakStr, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 + 15); // Centered vertically
 
         drawLowBatteryIndicator();
         redrawMenu = false; // Redraw done
@@ -1109,24 +1245,24 @@ void handleCalibrationInput(TimerState calibrationType) {
         Serial.println("Calibration cancelled.");
         stateBeforeEdit = (calibrationType == CALIBRATE_THRESHOLD) ? SETTINGS_MENU_GENERAL : SETTINGS_MENU_NOISY;
         setState(stateBeforeEdit);
-        // Adjust selection index based on removed "Show Boot GIF" item
-        currentMenuSelection = (calibrationType == CALIBRATE_THRESHOLD) ? 5 : 1; // Index of Calibrate items
+        // Adjust selection index based on Boot Animation item
+        currentMenuSelection = (calibrationType == CALIBRATE_THRESHOLD) ? 6 : 1; // Index of Calibrate items
         menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
         StickCP2.Lcd.fillScreen(BLACK);
         playUnsuccessBeeps();
     } else if (StickCP2.BtnA.wasClicked()) { // Save
         if (calibrationType == CALIBRATE_THRESHOLD) {
-            Serial.printf("Saving peak threshold value: %.0f\n", peakValue);
-            shotThresholdRms = (int)peakValue;
+            Serial.printf("Saving peak threshold value: %.0f\n", peakRMSOverall);
+            shotThresholdRms = (int)peakRMSOverall;
             stateBeforeEdit = SETTINGS_MENU_GENERAL;
             setState(stateBeforeEdit);
-            currentMenuSelection = 5; // Index of Calibrate Thresh
+            currentMenuSelection = 6; // Index of Calibrate Thresh
             menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
             StickCP2.Lcd.fillScreen(BLACK);
             playSuccessBeeps();
         } else if (calibrationType == CALIBRATE_RECOIL) {
-            Serial.printf("Saving peak recoil value: %.2f\n", peakValue);
-            // recoilThreshold = peakValue; // Uncomment when implemented
+            Serial.printf("Saving peak recoil value: %.2f\n", peakRecoilValue);
+            recoilThreshold = peakRecoilValue; // Save the captured peak
             stateBeforeEdit = SETTINGS_MENU_NOISY;
             setState(stateBeforeEdit);
             currentMenuSelection = 1; // Index of Calibrate Recoil
@@ -1142,17 +1278,16 @@ void handleCalibrationInput(TimerState calibrationType) {
  */
 void handleDeviceStatusInput() {
     // Update display only when redraw is flagged (entering state or battery check)
-    if (redrawMenu) { // <-- REMOVED time-based check
+    if (redrawMenu) {
         displayDeviceStatusScreen();
         redrawMenu = false;
-        // lastStatusUpdateTime = millis(); // No longer needed
     }
 
     // Check for return (Hold Front)
     if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
         Serial.println("Returning to Main Settings Menu from Status");
         setState(SETTINGS_MENU_MAIN); // Go back to main settings
-        currentMenuSelection = 3; // Select "Device Status" item (adjust index if menu changes)
+        currentMenuSelection = 3; // Index of "Device Status"
         int rotation = StickCP2.Lcd.getRotation();
         int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
         menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
@@ -1229,6 +1364,8 @@ void resetShotData() {
     currentCyclePeakRMS = 0.0;
     peakRMSOverall = 0.0;
     micPeakRMS.resetPeak();
+    checkingForRecoil = false; // Reset recoil check flag
+    lastSoundPeakTime = 0;
     Serial.println("Shot data and library peak reset.");
     for (int i = 0; i < MAX_SHOTS_LIMIT; ++i) {
         shotTimestamps[i] = 0;
@@ -1238,6 +1375,7 @@ void resetShotData() {
 
 /**
  * @brief Updates the display during the TIMING state (Cleaned up).
+ * Used by both Live Fire and Noisy Range modes.
  */
 void displayTimingScreen(float elapsedTime, int count, float lastSplit) {
     static float prevElapsedTime = -1.0;
@@ -1252,7 +1390,11 @@ void displayTimingScreen(float elapsedTime, int count, float lastSplit) {
                         abs(lastSplit - prevLastSplit) > 0.01 ||
                         lowBatteryWarning != prevLowBattery;
 
-    if (!updateNeeded) {
+    if (redrawMenu) { // If full redraw needed, clear screen first
+        StickCP2.Lcd.fillScreen(BLACK);
+    }
+
+    if (!updateNeeded && !redrawMenu) { // Skip if no update needed and not a forced redraw
         return;
     }
 
@@ -1262,34 +1404,35 @@ void displayTimingScreen(float elapsedTime, int count, float lastSplit) {
 
     // Update Time
     if (redrawMenu || abs(elapsedTime - prevElapsedTime) > 0.01) {
-        StickCP2.Lcd.setTextFont(7);
+        StickCP2.Lcd.setTextFont(7); // <-- Reverted to Font 7
         StickCP2.Lcd.setTextSize(1);
-        int time_y = (rotation % 2 == 0) ? 20 : 15;
-        StickCP2.Lcd.fillRect(5, time_y, StickCP2.Lcd.width() - 10 , StickCP2.Lcd.fontHeight(7) + 4, BLACK);
+        int time_y = (rotation % 2 == 0) ? 20 : 15; // Adjust Y position if needed
+        // Clear slightly larger area than text to handle different lengths
+        StickCP2.Lcd.fillRect(5, time_y, StickCP2.Lcd.width() - 10 , StickCP2.Lcd.fontHeight(7) + 4, BLACK); // Use Font 7 height
         StickCP2.Lcd.setCursor(10, time_y);
         StickCP2.Lcd.printf("%.2f", elapsedTime);
         prevElapsedTime = elapsedTime;
     }
 
     // Update Shot Count & Split Time
-    int shots_y = (rotation % 2 == 0) ? 80 : 75;
-    int split_y = shots_y + ((rotation % 2 == 0) ? 20 : 25);
-    int text_size = (rotation % 2 == 0) ? 1 : 2;
-    int line_h = (text_size == 1) ? 14 : 20;
+    int shots_y = (rotation % 2 == 0) ? 80 : 75; // Adjusted Y position
+    int split_y = shots_y + ((rotation % 2 == 0) ? 20 : 25); // Adjust Y spacing
+    int text_size = (rotation % 2 == 0) ? 1 : 2; // <-- Reverted text size logic
+    int line_h = (text_size == 1) ? 14 : 20; // Adjust clear height
 
     if (redrawMenu || count != prevCount) {
-        StickCP2.Lcd.setTextFont(0);
+        StickCP2.Lcd.setTextFont(0); // Reset font to default
         StickCP2.Lcd.setTextSize(text_size);
-        StickCP2.Lcd.fillRect(10, shots_y, StickCP2.Lcd.width() - 20, line_h, BLACK);
+        StickCP2.Lcd.fillRect(10, shots_y, StickCP2.Lcd.width() - 20, line_h, BLACK); // Clear shot count line
         StickCP2.Lcd.setCursor(10, shots_y);
         StickCP2.Lcd.printf("Shots: %d/%d", count, currentMaxShots);
         prevCount = count;
     }
 
     if (redrawMenu || abs(lastSplit - prevLastSplit) > 0.01 || count != prevCount) {
-        StickCP2.Lcd.setTextFont(0);
+        StickCP2.Lcd.setTextFont(0); // Reset font to default
         StickCP2.Lcd.setTextSize(text_size);
-        StickCP2.Lcd.fillRect(10, split_y, StickCP2.Lcd.width() - 20, line_h, BLACK);
+        StickCP2.Lcd.fillRect(10, split_y, StickCP2.Lcd.width() - 20, line_h, BLACK); // Clear split time line
         StickCP2.Lcd.setCursor(10, split_y);
         if (count > 0) {
             StickCP2.Lcd.printf("Split: %.2fs", lastSplit);
@@ -1312,15 +1455,16 @@ void displayTimingScreen(float elapsedTime, int count, float lastSplit) {
 
 /**
  * @brief Displays the summary screen in the STOPPED state.
+ * Used by both Live Fire and Noisy Range modes.
  */
 void displayStoppedScreen() {
-    StickCP2.Lcd.fillScreen(BLACK);
+    StickCP2.Lcd.fillScreen(BLACK); // Full redraw for summary is acceptable
     StickCP2.Lcd.setTextFont(0);
     StickCP2.Lcd.setTextColor(WHITE, BLACK);
     StickCP2.Lcd.setTextDatum(TL_DATUM);
     int rotation = StickCP2.Lcd.getRotation();
-    int text_size = (rotation % 2 == 0) ? 1 : 2;
-    int line_h = (text_size == 1) ? 18 : 30;
+    int text_size = (rotation % 2 == 0) ? 1 : 2; // <-- Reverted text size logic
+    int line_h = (text_size == 1) ? 18 : 30; // <-- Reverted line height logic
     int y_pos = 15;
 
     StickCP2.Lcd.setTextSize(text_size);
@@ -1363,22 +1507,26 @@ void displayStoppedScreen() {
         y_pos += line_h;
     }
 
-    StickCP2.Lcd.setTextSize(1);
-    StickCP2.Lcd.setCursor(30, StickCP2.Lcd.height() - 20);
+    StickCP2.Lcd.setTextSize(1); // Reset size for instruction
+    StickCP2.Lcd.setCursor(30, StickCP2.Lcd.height() - 20); // Position instruction lower
     StickCP2.Lcd.print("Press Front to Reset");
 
     drawLowBatteryIndicator();
 }
 
 /**
- * @brief Plays a tone on the external buzzer pin.
+ * @brief Plays a tone on the external buzzer pins.
  */
 void playTone(int freq, int duration) {
     if (freq > 0) {
         tone(BUZZER_PIN, freq, duration);
+        tone(BUZZER_PIN_2, freq, duration); // <-- Play on second buzzer too
     } else {
+        // If freq is 0, just delay without playing tone
         delay(duration);
     }
+    // Note: noTone is called after sequences in playSuccess/UnsuccessBeeps
+    // or implicitly handled by the tone() function's duration parameter
 }
 
 /**
@@ -1393,6 +1541,7 @@ void playSuccessBeeps() {
         delay(BEEP_NOTE_DELAY_MS);
     }
     noTone(BUZZER_PIN);
+    noTone(BUZZER_PIN_2); // <-- Stop second buzzer
 }
 
 /**
@@ -1407,6 +1556,7 @@ void playUnsuccessBeeps() {
         delay(BEEP_NOTE_DELAY_MS * 2);
     }
     noTone(BUZZER_PIN);
+    noTone(BUZZER_PIN_2); // <-- Stop second buzzer
 }
 
 /**
@@ -1474,9 +1624,21 @@ void loadSettings() {
     currentBeepToneHz = preferences.getInt(KEY_BEEP_HZ, 2000);
     shotThresholdRms = preferences.getInt(KEY_SHOT_THRESH, 15311);
     dryFireParBeepCount = preferences.getInt(KEY_DF_BEEP_CNT, 3);
+    // Ensure beep count is within valid range for the array
+    if (dryFireParBeepCount < 1) dryFireParBeepCount = 1;
+    if (dryFireParBeepCount > MAX_PAR_BEEPS) dryFireParBeepCount = MAX_PAR_BEEPS;
+
+    // Load individual par times
+    for (int i = 0; i < MAX_PAR_BEEPS; ++i) {
+        char key[12];
+        sprintf(key, "dfParT_%d", i); // Create keys like dfParT_0, dfParT_1,...
+        dryFireParTimesSec[i] = preferences.getFloat(key, 1.0f); // Default to 1.0s
+    }
+
     recoilThreshold = preferences.getFloat(KEY_NR_RECOIL, 1.5);
     screenRotationSetting = preferences.getInt(KEY_ROTATION, 3); // Default to 3
     if (screenRotationSetting < 0 || screenRotationSetting > 3) screenRotationSetting = 3; // Validate
+    playBootAnimation = preferences.getBool(KEY_BOOT_ANIM, true);
 
     Serial.println("Settings loaded.");
 }
@@ -1491,8 +1653,15 @@ void saveSettings() {
     preferences.putInt(KEY_BEEP_HZ, currentBeepToneHz);
     preferences.putInt(KEY_SHOT_THRESH, shotThresholdRms);
     preferences.putInt(KEY_DF_BEEP_CNT, dryFireParBeepCount);
+    // Save individual par times
+    for (int i = 0; i < MAX_PAR_BEEPS; ++i) {
+         char key[12];
+         sprintf(key, "dfParT_%d", i);
+         preferences.putFloat(key, dryFireParTimesSec[i]);
+    }
     preferences.putFloat(KEY_NR_RECOIL, recoilThreshold);
     preferences.putInt(KEY_ROTATION, screenRotationSetting);
+    preferences.putBool(KEY_BOOT_ANIM, playBootAnimation);
     Serial.println("Settings saved.");
 }
 
@@ -1503,14 +1672,6 @@ void savePeakVoltage(float voltage) {
     preferences.putFloat(KEY_PEAK_BATT, voltage);
 }
 
-// /**
-//  * @brief Prints the list of files in LittleFS root directory to Serial.
-//  */
-// void printLittleFSFiles() { // <-- REMOVED function
-//     // ... (code removed)
-// }
-
-
 // --- Function to handle LIST_FILES state ---
 void handleListFilesInput() {
     int rotation = StickCP2.Lcd.getRotation();
@@ -1519,7 +1680,7 @@ void handleListFilesInput() {
     // Populate file list only when entering the state
     if (redrawMenu) {
         fileListCount = 0;
-        File root = LittleFS.open("/"); // <-- CHANGED from SPIFFS
+        File root = LittleFS.open("/");
         if (!root) {
             Serial.println("Failed to open root directory");
         } else if (!root.isDirectory()) {
@@ -1567,7 +1728,7 @@ void handleListFilesInput() {
      if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
          Serial.println("Returning to Main Settings Menu from File List");
          setState(SETTINGS_MENU_MAIN); // Go back to main settings
-         currentMenuSelection = 4; // Select "List Files" item (adjust index if menu changes)
+         currentMenuSelection = 4; // Index of "List Files"
          menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
          StickCP2.Lcd.fillScreen(BLACK);
      }
@@ -1579,7 +1740,7 @@ void displayListFilesScreen() {
     StickCP2.Lcd.setTextDatum(TC_DATUM);
     StickCP2.Lcd.setTextFont(0);
     StickCP2.Lcd.setTextSize(2);
-    StickCP2.Lcd.drawString("LittleFS Files", StickCP2.Lcd.width() / 2, 10); // <-- UPDATED Text
+    StickCP2.Lcd.drawString("LittleFS Files", StickCP2.Lcd.width() / 2, 10);
 
     StickCP2.Lcd.setTextDatum(TL_DATUM);
     StickCP2.Lcd.setTextSize(1); // Use small text for file list
@@ -1593,7 +1754,7 @@ void displayListFilesScreen() {
         StickCP2.Lcd.print("No files found or");
         y_pos += line_h;
         StickCP2.Lcd.setCursor(10, y_pos);
-        StickCP2.Lcd.print("LittleFS error."); // <-- UPDATED Text
+        StickCP2.Lcd.print("LittleFS error.");
     } else {
         int startIdx = fileListScrollOffset;
         int endIdx = min(fileListScrollOffset + itemsPerScreen, fileListCount);
@@ -1626,80 +1787,344 @@ void displayListFilesScreen() {
     drawLowBatteryIndicator();
 }
 
-/**
- * @brief Handles input and display for the Format LittleFS confirmation screen.
- */
-void handleConfirmFormatInput() { // <-- RENAMED function
-    int rotation = StickCP2.Lcd.getRotation();
+// --- Dry Fire Par Mode Functions ---
 
-    if (redrawMenu) {
-        StickCP2.Lcd.fillScreen(BLACK);
-        StickCP2.Lcd.setTextDatum(MC_DATUM);
+/**
+ * @brief Displays the initial screen for Dry Fire Par mode.
+ */
+void displayDryFireReadyScreen() {
+    StickCP2.Lcd.fillScreen(BLACK);
+    StickCP2.Lcd.setTextDatum(MC_DATUM);
+    StickCP2.Lcd.setTextFont(0);
+    StickCP2.Lcd.setTextSize(2);
+    StickCP2.Lcd.drawString("Dry Fire Par", StickCP2.Lcd.width() / 2, 30);
+
+    StickCP2.Lcd.setTextSize(1);
+    StickCP2.Lcd.drawString("Press Front to Start", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 + 10);
+    StickCP2.Lcd.drawString("Hold Front to Exit", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 20);
+
+    drawLowBatteryIndicator();
+}
+
+/**
+ * @brief Displays the screen while Dry Fire Par is running (delay or beeping).
+ */
+void displayDryFireRunningScreen(bool waiting, int beepNum, int totalBeeps) {
+    // Only redraw if necessary (usually handled by redrawMenu flag)
+    if (!redrawMenu) return;
+
+    StickCP2.Lcd.fillScreen(BLACK);
+    StickCP2.Lcd.setTextDatum(MC_DATUM);
+    StickCP2.Lcd.setTextFont(0);
+
+    if (waiting) {
+        StickCP2.Lcd.setTextSize(3);
+        StickCP2.Lcd.drawString("Waiting...", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
+    } else {
+        StickCP2.Lcd.setTextSize(7); // Use large font for beep count
+        StickCP2.Lcd.drawString(String(beepNum), StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 - 10);
         StickCP2.Lcd.setTextFont(0);
-        StickCP2.Lcd.setTextSize(2);
-        StickCP2.Lcd.drawString("Format LittleFS?", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 - 20); // <-- UPDATED Text
         StickCP2.Lcd.setTextSize(1);
-        StickCP2.Lcd.drawString("ALL FILES WILL BE ERASED!", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 + 5);
-        StickCP2.Lcd.setTextDatum(BC_DATUM);
-        StickCP2.Lcd.drawString("Press Front=OK / Hold=Cancel", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 10);
-        drawLowBatteryIndicator();
+        StickCP2.Lcd.drawString("Beep / " + String(totalBeeps), StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 + 35);
+    }
+
+    StickCP2.Lcd.setTextDatum(BC_DATUM);
+    StickCP2.Lcd.setTextSize(1);
+    StickCP2.Lcd.drawString("Hold Front to Cancel", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 10);
+
+    drawLowBatteryIndicator();
+    redrawMenu = false; // Mark redraw as done
+}
+
+/**
+ * @brief Handles input for the DRY_FIRE_READY state.
+ */
+void handleDryFireReadyInput() {
+    if (redrawMenu) {
+        displayDryFireReadyScreen();
         redrawMenu = false;
     }
 
-    // Cancel (Hold Front)
-    if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
-        Serial.println("Format LittleFS cancelled."); // <-- UPDATED Text
-        setState(SETTINGS_MENU_MAIN); // Go back to main settings
-        currentMenuSelection = 5; // Index of "Format LittleFS"
-        int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
-        menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
-        StickCP2.Lcd.fillScreen(BLACK); // Explicit clear on cancel
-        playUnsuccessBeeps();
-        return;
-    }
-
-    // Confirm (Short Press Front)
+    // Start sequence (Short Press Front)
     if (StickCP2.BtnA.wasClicked()) {
-        Serial.println("Formatting LittleFS..."); // <-- UPDATED Text
-        StickCP2.Lcd.fillScreen(BLACK);
-        StickCP2.Lcd.setTextDatum(MC_DATUM);
-        StickCP2.Lcd.setTextSize(2);
-        StickCP2.Lcd.drawString("Formatting...", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
+        Serial.println("Starting Dry Fire Par sequence...");
+        randomSeed(micros()); // Seed random number generator
+        unsigned long randomDelay = random(DRY_FIRE_RANDOM_DELAY_MIN_MS, DRY_FIRE_RANDOM_DELAY_MAX_MS + 1);
+        Serial.printf("Random Delay: %lu ms\n", randomDelay);
 
-        bool formatSuccess = LittleFS.format(); // Perform the format <-- CHANGED from SPIFFS
+        randomDelayStartMs = millis();
+        parTimerStartTime = randomDelayStartMs + randomDelay; // Time when first beep should occur
+        beepSequenceStartTime = 0; // Will be set after first beep
+        beepsPlayed = 0;
+        nextBeepTime = 0; // Reset next beep time
+        lastBeepTime = 0; // Reset last beep time
 
-        StickCP2.Lcd.fillScreen(BLACK); // Clear "Formatting..." message
-        if (formatSuccess) {
-            Serial.println("LittleFS Format Successful."); // <-- UPDATED Text
-            StickCP2.Lcd.drawString("Format OK!", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
-            playSuccessBeeps();
-        } else {
-            Serial.println("!!! LittleFS Format Failed!"); // <-- UPDATED Text
-            StickCP2.Lcd.drawString("Format FAILED!", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
-            playUnsuccessBeeps();
-        }
-        delay(MESSAGE_DISPLAY_MS); // Show message briefly
-
-        // Return to main settings menu
-        setState(SETTINGS_MENU_MAIN);
-        currentMenuSelection = 5; // Index of "Format LittleFS"
-        int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
-        menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
-        StickCP2.Lcd.fillScreen(BLACK); // Explicit clear on return
-        return;
+        setState(DRY_FIRE_RUNNING);
+        // displayDryFireRunningScreen will be called because redrawMenu is true
     }
 
-    // Cancel with other buttons (Top/Bottom)
-    bool upPressed = (rotation == 3) ? M5.BtnPWR.wasClicked() : StickCP2.BtnB.wasClicked();
-    bool downPressed = (rotation == 3) ? StickCP2.BtnB.wasClicked() : M5.BtnPWR.wasClicked();
-    if (upPressed || downPressed) {
-        Serial.println("Format LittleFS cancelled (Side button)."); // <-- UPDATED Text
-        setState(SETTINGS_MENU_MAIN); // Go back to main settings
-        currentMenuSelection = 5; // Index of "Format LittleFS"
+    // Exit (Hold Front)
+    if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
+        Serial.println("Exiting Dry Fire Par mode.");
+        setState(MODE_SELECTION);
+        currentMenuSelection = (int)MODE_DRY_FIRE; // Highlight Dry Fire on return
+        int rotation = StickCP2.Lcd.getRotation();
         int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
-        menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
-        StickCP2.Lcd.fillScreen(BLACK); // Explicit clear on cancel
-        playUnsuccessBeeps();
-        return;
+        menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1); // Adjust scroll
+        StickCP2.Lcd.fillScreen(BLACK);
     }
 }
+
+/**
+ * @brief Handles the running state (delay and beeps) for Dry Fire Par mode.
+ */
+void handleDryFireRunning() {
+    unsigned long currentTime = millis();
+
+    // Check for cancel (Hold Front)
+    if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
+        Serial.println("Dry Fire Par sequence cancelled.");
+        setState(DRY_FIRE_READY); // Go back to ready state
+        playUnsuccessBeeps();
+        return; // Exit handler immediately
+    }
+
+    // --- Phase 1: Random Delay ---
+    if (beepSequenceStartTime == 0) {
+        if (redrawMenu) {
+            displayDryFireRunningScreen(true, 0, 0); // Show "Waiting..."
+        }
+        // Check if delay is over
+        if (currentTime >= parTimerStartTime) {
+            Serial.println("Random delay finished. Playing first beep.");
+            playTone(currentBeepToneHz, currentBeepDuration);
+            beepSequenceStartTime = currentTime; // Record time of first beep
+            lastBeepTime = beepSequenceStartTime; // The first beep is the 'last' beep initially
+            beepsPlayed = 1; // Count the first beep
+            // Calculate time for the next beep (if any) based on the first par time
+            if (beepsPlayed < dryFireParBeepCount && dryFireParBeepCount > 0) {
+                 // Use the par time for the interval *after* the first beep (index 0)
+                 int parIndex = 0; // Index for the first interval
+                 if (parIndex < MAX_PAR_BEEPS) {
+                    nextBeepTime = lastBeepTime + (unsigned long)(dryFireParTimesSec[parIndex] * 1000.0f);
+                    Serial.printf("Next beep (%d) scheduled using par time %d (%.1fs) at %lu\n", beepsPlayed + 1, parIndex + 1, dryFireParTimesSec[parIndex], nextBeepTime);
+                 } else {
+                    Serial.println("Warning: Par index out of bounds for next beep calc.");
+                    beepsPlayed = dryFireParBeepCount; // Prevent further beeps
+                 }
+            }
+            redrawMenu = true; // Force redraw to show beep count
+        }
+    }
+    // --- Phase 2: Par Beep Sequence ---
+    else {
+         if (redrawMenu) {
+            displayDryFireRunningScreen(false, beepsPlayed, dryFireParBeepCount); // Show "Beep X / Y"
+         }
+        // Check if all required beeps have been played
+        if (beepsPlayed >= dryFireParBeepCount) {
+            Serial.println("Par beep sequence finished.");
+            setState(DRY_FIRE_READY); // Go back to ready state
+            delay(500); // Small delay before returning to ready screen
+        }
+        // Check if it's time for the next beep
+        else if (currentTime >= nextBeepTime && nextBeepTime > 0) { // Ensure nextBeepTime is valid
+            Serial.printf("Playing par beep %d\n", beepsPlayed + 1);
+            playTone(currentBeepToneHz, currentBeepDuration);
+            lastBeepTime = currentTime; // Update last beep time
+            beepsPlayed++;
+            // Calculate time for the *next* beep (if any)
+            if (beepsPlayed < dryFireParBeepCount) {
+                int parIndex = beepsPlayed -1; // Index for the interval *after* the beep we just played
+                 if (parIndex >= 0 && parIndex < MAX_PAR_BEEPS) {
+                    nextBeepTime = lastBeepTime + (unsigned long)(dryFireParTimesSec[parIndex] * 1000.0f);
+                    Serial.printf("Next beep (%d) scheduled using par time %d (%.1fs) at %lu\n", beepsPlayed + 1, parIndex + 1, dryFireParTimesSec[parIndex], nextBeepTime);
+                 } else {
+                    Serial.println("Warning: Par index out of bounds for next beep calc.");
+                    beepsPlayed = dryFireParBeepCount; // Prevent further beeps
+                    nextBeepTime = 0; // Invalidate next beep time
+                 }
+            } else {
+                nextBeepTime = 0; // No more beeps to schedule
+            }
+            redrawMenu = true; // Force redraw to update beep count
+        }
+    }
+}
+
+// --- Noisy Range Mode Functions ---
+
+/**
+ * @brief Handles input for the NOISY_RANGE_READY state.
+ */
+void handleNoisyRangeReadyInput() {
+    if (redrawMenu) {
+        displayTimingScreen(0.0, 0, 0.0); // Use the standard timing screen display
+        redrawMenu = false;
+    }
+    if (StickCP2.BtnA.wasClicked()) {
+        Serial.println("Front Button pressed - Starting Noisy Range");
+        setState(NOISY_RANGE_GET_READY);
+        StickCP2.Lcd.fillScreen(BLACK);
+        StickCP2.Lcd.setTextDatum(MC_DATUM);
+        StickCP2.Lcd.setTextFont(0);
+        StickCP2.Lcd.setTextSize(3);
+        StickCP2.Lcd.drawString("Ready...", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2);
+        delay(1000); // Short delay for user readiness
+    }
+     // Exit (Hold Front) - Allow exiting from ready state
+    if (StickCP2.BtnA.pressedFor(LONG_PRESS_DURATION_MS)) {
+        Serial.println("Exiting Noisy Range mode.");
+        setState(MODE_SELECTION);
+        currentMenuSelection = (int)MODE_NOISY_RANGE; // Highlight Noisy Range on return
+        int rotation = StickCP2.Lcd.getRotation();
+        int itemsPerScreen = (rotation % 2 == 0) ? MENU_ITEMS_PER_SCREEN_PORTRAIT : MENU_ITEMS_PER_SCREEN_LANDSCAPE;
+        menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1); // Adjust scroll
+        StickCP2.Lcd.fillScreen(BLACK);
+    }
+}
+
+/**
+ * @brief Handles the get ready phase for Noisy Range mode (plays beep).
+ */
+void handleNoisyRangeGetReady() {
+    Serial.println("Generating start beep (Noisy Range)...");
+    playTone(currentBeepToneHz, currentBeepDuration);
+    delay(POST_BEEP_DELAY_MS); // Add delay after beep
+    micPeakRMS.resetPeak();    // Reset peak immediately after beep/delay
+    Serial.println("Beep finished, peak reset. Starting timer (Noisy Range).");
+    resetShotData(); // Resets counts, peak, recoil flag etc.
+    startTime = millis(); // Set start time AFTER reset and delay
+    lastDisplayUpdateTime = 0;
+    StickCP2.Lcd.fillScreen(BLACK); // <-- Explicit clear before timing starts
+    setState(NOISY_RANGE_TIMING); // redrawMenu is set by setState
+}
+
+/**
+ * @brief Handles the timing and detection logic for Noisy Range mode.
+ */
+void handleNoisyRangeTiming() {
+    unsigned long currentTime = millis();
+    float accX, accY, accZ;
+
+    if (currentState != NOISY_RANGE_TIMING) return; // Exit if state changed
+
+    // --- Update Display Periodically ---
+    float currentElapsedTime = (currentTime - startTime) / 1000.0;
+    if (redrawMenu || currentTime - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) { // Check redrawMenu here too
+        float lastSplit = (shotCount > 0) ? splitTimes[shotCount - 1] : 0.0;
+        displayTimingScreen(currentElapsedTime, shotCount, lastSplit); // Use standard display
+        lastDisplayUpdateTime = currentTime;
+    }
+
+    // --- Shot Detection Logic (Sound + Recoil) ---
+    currentCyclePeakRMS = micPeakRMS.getPeakRMS(); // Get sound level
+
+    // Step 1: Detect sound peak above threshold (if not already waiting for recoil)
+    if (!checkingForRecoil &&
+        currentCyclePeakRMS > shotThresholdRms &&
+        currentTime - lastDetectionTime > SHOT_REFRACTORY_MS && // Basic refractory period
+        shotCount < currentMaxShots)
+    {
+        Serial.printf("Noisy: Sound Peak Detected (%.0f)\n", currentCyclePeakRMS);
+        lastSoundPeakTime = currentTime; // Record time of sound peak
+        checkingForRecoil = true;       // Start looking for recoil
+        micPeakRMS.resetPeak();         // Reset mic peak immediately
+    }
+
+    // Step 2: Check for recoil if a sound peak was just detected
+    if (checkingForRecoil) {
+        StickCP2.Imu.getAccelData(&accX, &accY, &accZ);
+        float currentRecoil = abs(accZ); // Use absolute Z-axis acceleration for recoil check
+
+        // Check if recoil threshold is met within the window
+        if (currentRecoil > recoilThreshold) {
+             unsigned long shotTimeMillis = lastSoundPeakTime; // Use the time of the sound peak
+
+            // --- Ignore first shot if too soon ---
+            if (shotCount == 0 && (shotTimeMillis - startTime) <= MIN_FIRST_SHOT_TIME_MS) {
+                Serial.printf("Ignoring early first shot (Noisy) detected at %lu ms (Start: %lu ms)\n", shotTimeMillis, startTime);
+                lastDetectionTime = currentTime; // Still update refractory timer
+                checkingForRecoil = false; // Reset flag
+                lastSoundPeakTime = 0;     // Reset time
+            } else {
+                // --- Register the shot ---
+                Serial.printf("Noisy: Recoil Detected (%.2f G) within window. SHOT REGISTERED.\n", currentRecoil);
+                lastDetectionTime = shotTimeMillis; // Update refractory timer
+                shotTimestamps[shotCount] = shotTimeMillis;
+
+                float currentSplit;
+                if (shotCount == 0) {
+                    currentSplit = (shotTimeMillis - startTime) / 1000.0;
+                } else {
+                    if (lastShotTimestamp > 0) {
+                       currentSplit = (shotTimeMillis - lastShotTimestamp) / 1000.0;
+                    } else { currentSplit = 0.0; }
+                }
+                lastShotTimestamp = shotTimeMillis;
+                splitTimes[shotCount] = currentSplit;
+
+                Serial.printf("Shot %d Registered! Time: %.2fs, Split: %.2fs\n",
+                              shotCount + 1, (shotTimeMillis - startTime)/1000.0, currentSplit);
+                shotCount++;
+
+                // Force immediate update of timing screen after shot
+                redrawMenu = true;
+                displayTimingScreen(currentElapsedTime, shotCount, currentSplit);
+                lastDisplayUpdateTime = currentTime;
+
+                checkingForRecoil = false; // Stop checking for recoil for this shot
+                lastSoundPeakTime = 0;
+
+                // Check if max shots reached
+                if (shotCount >= currentMaxShots) {
+                    Serial.println("Max shots reached. Stopping timer.");
+                    setState(LIVE_FIRE_STOPPED); // Use common stopped state
+                    StickCP2.Lcd.fillScreen(BLACK);
+                    displayStoppedScreen();
+                    if (shotCount > 0) playSuccessBeeps(); else playUnsuccessBeeps();
+                    return; // Exit handler
+                }
+            } // end else (not an ignored first shot)
+        }
+        // Check if recoil window expired without meeting threshold
+        else if (currentTime - lastSoundPeakTime > RECOIL_DETECTION_WINDOW_MS) {
+            Serial.println("Noisy: Recoil window expired. False alarm.");
+            checkingForRecoil = false; // Stop checking
+            lastSoundPeakTime = 0;
+        }
+    }
+
+    // Reset mic peak if not waiting for recoil (to avoid stale high values)
+    if (!checkingForRecoil) {
+        micPeakRMS.resetPeak();
+    }
+
+    // Check for Stop Button Press (Manual Stop - Use wasClicked)
+    if (currentState == NOISY_RANGE_TIMING && StickCP2.BtnA.wasClicked()) {
+        Serial.println("Stop button pressed manually (Noisy Range).");
+        setState(LIVE_FIRE_STOPPED); // Use common stopped state
+        StickCP2.Lcd.fillScreen(BLACK);
+        displayStoppedScreen();
+        if (shotCount > 0) playSuccessBeeps(); else playUnsuccessBeeps();
+        return; // Exit handler
+    }
+
+    // Check for Timeout
+    if (currentState == NOISY_RANGE_TIMING) {
+        unsigned long timeSinceEvent = (shotCount == 0) ? (currentTime - startTime) : (currentTime - lastShotTimestamp);
+        bool hasStarted = (startTime > 0); // Timer considered started if beep happened
+
+        if (hasStarted && timeSinceEvent > TIMEOUT_DURATION_MS) {
+            Serial.printf("Timeout reached (%s). Stopping timer (Noisy Range).\n", (shotCount == 0) ? "no shots" : "after last shot");
+            setState(LIVE_FIRE_STOPPED); // Use common stopped state
+            StickCP2.Lcd.fillScreen(BLACK);
+            displayStoppedScreen();
+             if (shotCount > 0) playSuccessBeeps(); else playUnsuccessBeeps();
+        }
+    }
+}
+
+// void handleConfirmFormatInput() { // <-- REMOVED function
+//     // ... (code removed)
+// }
