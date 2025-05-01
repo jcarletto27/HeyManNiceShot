@@ -7,7 +7,7 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
 ## Hardware Required
 
 * **M5StickCPlus2:** The core microcontroller and display unit. ([M5Stack Store](https://shop.m5stack.com/products/m5stickc-plus2-esp32-pico-d4))
-* **External Buzzer (Optional but Recommended):** Connect an active buzzer to GPIO 25 and GPIO 2 (and GND) for louder audio feedback than the internal speaker (which is disabled by the code).
+* **External Buzzer (Optional but Recommended):** Connect an active buzzer to GPIO 25 and GND for louder audio feedback than the internal speaker.
 
 ## Features
 
