@@ -46,13 +46,13 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
     * **Arduino IDE:** Install the ESP32 board support package and the M5StickCPlus2 library.
     * **PlatformIO:** Configure your `platformio.ini` for the `m5stick-c-plus` board (or similar, check exact board ID) and include the M5StickCPlus2 library under `lib_deps`.
 2.  **Board Selection:** Select "M5StickCPlus2" (or the appropriate variant) in your IDE's board manager.
-3.  **Partition Scheme:** **Crucially**, select a partition scheme that includes **LittleFS**. A scheme like "Default 4MB with LittleFS (...)" is recommended. If you change the partition scheme, you must re-upload the main sketch.
+3.  **Partition Scheme:** **Crucially**, I selected the partition "8MB with SPIFFS"
 4.  **Custom Library:** Ensure the `M5MicPeakRMS.h` and `M5MicPeakRMS.cpp` files are accessible to the compiler (either in the sketch folder or a dedicated library folder).
 5.  **LittleFS Data Upload:**
     * Create a folder named `data` in your main sketch directory (Arduino IDE) or project root (PlatformIO).
     * Place your boot animation JPG files inside this `data` folder, named sequentially: `1.jpg`, `2.jpg`, `3.jpg`, etc.
     * Use the appropriate tool to upload the filesystem image:
-        * **Arduino IDE:** `Tools` -> `ESP32 Sketch Data Upload`
+        * **Arduino IDE:** Install the [littleFS upload tool](https://github.com/earlephilhower/arduino-littlefs-upload) from within the IDE, open the command pallete (Ctrl+Shift+P) and then type upload littlefs
         * **PlatformIO:** Run the "Upload Filesystem Image" task.
 6.  **Compile & Upload:** Compile and upload the main sketch (`.ino` file).
 
