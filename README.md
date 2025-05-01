@@ -1,4 +1,5 @@
-# M5StickCPlus2 Shot Timer
+#Hey Man, Nice Shot...Timer
+## M5StickCPlus2 Shot Timer
 
 ## Description
 
