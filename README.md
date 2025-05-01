@@ -1,4 +1,4 @@
-#Hey Man, Nice Shot...Timer
+# Hey Man, Nice Shot...Timer
 ## M5StickCPlus2 Shot Timer
 
 ## Description
@@ -38,7 +38,7 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
 * **M5StickCPlus2 Library:** (Installs M5Unified and M5GFX as dependencies) - Install via Arduino Library Manager or PlatformIO Library Manager.
 * **Preferences:** Built-in ESP32 library.
 * **LittleFS:** Built-in ESP32 library (ensure ESP32 core is up-to-date).
-* **M5MicPeakRMS:** The custom library included (`M5MicPeakRMS.h`, `M5MicPeakRMS.cpp`) for microphone peak detection. Place these files in your sketch directory or in your Arduino libraries folder under a subfolder named `M5MicPeakRMS`.
+* **M5MicPeakRMS:** [link](https://github.com/jcarletto27/M5MicPeakRMS) The custom library included (`M5MicPeakRMS.h`, `M5MicPeakRMS.cpp`) for microphone peak detection. Place these files in your sketch directory or in your Arduino libraries folder under a subfolder named `M5MicPeakRMS`.
 
 ## Setup Instructions
 
