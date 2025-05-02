@@ -19,8 +19,8 @@ const float BATTERY_LOW_PERCENTAGE = 0.78;        // 78% threshold for low batte
 const int MAX_SHOTS_LIMIT = 20; // Absolute maximum array size
 const int MENU_ITEM_HEIGHT_LANDSCAPE = 25;
 const int MENU_ITEM_HEIGHT_PORTRAIT = 18; // Smaller height for portrait text size 1
-const int MENU_ITEMS_PER_SCREEN_LANDSCAPE = 4; // Adjusted for potentially longer setting names
-const int MENU_ITEMS_PER_SCREEN_PORTRAIT = 5; // Adjusted for potentially longer setting names
+const int MENU_ITEMS_PER_SCREEN_LANDSCAPE = 3; // Adjusted for potentially longer setting names
+const int MENU_ITEMS_PER_SCREEN_PORTRAIT = 4; // Adjusted for potentially longer setting names
 const unsigned long POST_BEEP_DELAY_MS = 350; // Small delay after start beep to prevent false trigger
 const int MAX_FILES_LIST = 20; // Max files to list on status screen
 const unsigned long BOOT_JPG_FRAME_DELAY_MS = 100; // Delay between JPG frames
@@ -1220,21 +1220,16 @@ void handleCalibrationInput(TimerState calibrationType) {
             if (calibrationType == CALIBRATE_RECOIL) {
                  StickCP2.Lcd.drawString("Trigger Recoil", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
             } else {
-                 StickCP2.Lcd.drawString("Make Loud Noise", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
+                 //StickCP2.Lcd.drawString("Make Loud Noise", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()-45);
             }
         }
 
         // Draw Current and Peak Values
-        StickCP2.Lcd.setTextDatum(MC_DATUM);
-        StickCP2.Lcd.setTextFont(0); // Use smaller font
-        StickCP2.Lcd.setTextSize(1);
-        String currentStr = "Current: " + String(currentValue, (calibrationType == CALIBRATE_RECOIL ? 2 : 0)) + " " + unit;
-        StickCP2.Lcd.drawString(currentStr, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 - 10);
-
-        StickCP2.Lcd.setTextFont(7); // Use large font for peak
-        StickCP2.Lcd.setTextSize(1);
+        StickCP2.Lcd.setTextDatum(MC_DATUM);     
+        StickCP2.Lcd.setTextFont(1); // Use large font for peak
+        StickCP2.Lcd.setTextSize(3);
         String peakStr = "PEAK: " + String((calibrationType == CALIBRATE_RECOIL ? peakRecoilValue : peakRMSOverall), (calibrationType == CALIBRATE_RECOIL ? 2 : 0));
-        StickCP2.Lcd.drawString(peakStr, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2 + 15); // Centered vertically
+        StickCP2.Lcd.drawString(peakStr, StickCP2.Lcd.width() / 2, (StickCP2.Lcd.height()/2)); // Centered vertically
 
         drawLowBatteryIndicator();
         redrawMenu = false; // Redraw done
