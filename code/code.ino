@@ -326,6 +326,10 @@ void loop() {
     // --- Auto Power Off Check ---
     if (enableAutoOff && currentState != BOOT_SCREEN && currentState != BOOT_JPG_SEQUENCE) { // Don't auto-off during boot
         if (currentTime - lastActivityTime > AUTO_OFF_TIMEOUT_MS) {
+            // --- ADDED DEBUG PRINT ---
+            Serial.printf("Auto-off check: currentTime=%lu, lastActivityTime=%lu, diff=%lu, TIMEOUT=%lu\n",
+                          currentTime, lastActivityTime, currentTime - lastActivityTime, AUTO_OFF_TIMEOUT_MS);
+            // --- END DEBUG PRINT ---
             Serial.println("Auto Power Off Timeout Reached. Shutting down.");
             StickCP2.Lcd.fillScreen(BLACK);
             StickCP2.Lcd.setTextDatum(MC_DATUM);
