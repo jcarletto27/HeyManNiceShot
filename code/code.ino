@@ -4,6 +4,8 @@
 #include <float.h>        // Include for FLT_MAX
 #include <Preferences.h>  // For Non-Volatile Storage
 #include <LittleFS.h>     // For LittleFS File System
+#include "driver/rtc_io.h" // Needed for deep/light sleep wakeup config
+#include "esp_sleep.h"     // Needed for light sleep functions
 
 // --- Button Aliases (No longer used for B/PWR) ---
 // Using direct references now
@@ -31,7 +33,8 @@ const unsigned long DRY_FIRE_RANDOM_DELAY_MAX_MS = 5000; // Max random delay for
 const int MAX_PAR_BEEPS = 10; // Maximum number of par beeps/times we can configure
 const unsigned long RECOIL_DETECTION_WINDOW_MS = 100; // Time (ms) after sound peak to check for recoil
 const unsigned long MIN_FIRST_SHOT_TIME_MS = 100;
-const unsigned long AUTO_OFF_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes in milliseconds
+const unsigned long AUTO_SLEEP_TIMEOUT_MS = 1 * 60 * 1000; // 1 minute in milliseconds <-- RENAMED & using 1min for testing
+const unsigned long SLEEP_MESSAGE_DELAY_MS = 1500; // How long to show "Sleeping..." message
 
 // --- NVS Keys ---
 const char* NVS_NAMESPACE = "ShotTimer";
@@ -45,7 +48,7 @@ const char* KEY_NR_RECOIL = "nrRecoil";
 const char* KEY_PEAK_BATT = "peakBatt";
 const char* KEY_ROTATION = "rotation";
 const char* KEY_BOOT_ANIM = "bootAnim";
-const char* KEY_AUTO_OFF = "autoOff";
+const char* KEY_AUTO_SLEEP = "autoSleep";     // <-- RENAMED NVS Key for Auto Sleep
 
 // --- Timer States ---
 enum TimerState {
@@ -92,7 +95,7 @@ enum EditableSetting {
     EDIT_RECOIL_THRESHOLD,
     EDIT_ROTATION,
     EDIT_BOOT_ANIM,
-    EDIT_AUTO_OFF
+    EDIT_AUTO_SLEEP           // <-- RENAMED Setting Enum
 };
 
 // --- Global Variables ---
@@ -115,7 +118,7 @@ float dryFireParTimesSec[MAX_PAR_BEEPS];
 float recoilThreshold = 1.5;
 int screenRotationSetting = 3;
 bool playBootAnimation = true;
-bool enableAutoOff = true;
+bool enableAutoSleep = true; // <-- RENAMED Setting Variable
 
 // Shot Data Arrays
 int shotCount = 0;
@@ -130,7 +133,7 @@ int menuScrollOffset = 0;
 int settingsMenuLevel = 0; // 0=Main, 1=General, 2=DryFire, 3=Noisy, 4=Beep
 unsigned long btnTopPressTime = 0; // Used for Settings entry AND exit from timer modes
 bool btnTopHeld = false; // Used for Settings entry AND exit from timer modes
-bool redrawMenu = true; // <-- ENSURE THIS GLOBAL DECLARATION IS PRESENT
+bool redrawMenu = true;
 
 // Editing Variables
 EditableSetting settingBeingEdited = EDIT_NONE;
@@ -323,20 +326,43 @@ void loop() {
 
     unsigned long currentTime = millis();
 
-    // --- Auto Power Off Check ---
-    if (enableAutoOff && currentState != BOOT_SCREEN && currentState != BOOT_JPG_SEQUENCE) { // Don't auto-off during boot
-        if (currentTime - lastActivityTime > AUTO_OFF_TIMEOUT_MS) {
-            // --- ADDED DEBUG PRINT ---
-            Serial.printf("Auto-off check: currentTime=%lu, lastActivityTime=%lu, diff=%lu, TIMEOUT=%lu\n",
-                          currentTime, lastActivityTime, currentTime - lastActivityTime, AUTO_OFF_TIMEOUT_MS);
-            // --- END DEBUG PRINT ---
-            Serial.println("Auto Power Off Timeout Reached. Shutting down.");
+    // --- Auto Sleep Check ---
+    if (enableAutoSleep && currentState != BOOT_SCREEN && currentState != BOOT_JPG_SEQUENCE) { // Don't auto-sleep during boot
+        if (currentTime - lastActivityTime > AUTO_SLEEP_TIMEOUT_MS) {
+            Serial.printf("Auto-sleep check: currentTime=%lu, lastActivityTime=%lu, diff=%lu, TIMEOUT=%lu\n",
+                          currentTime, lastActivityTime, currentTime - lastActivityTime, AUTO_SLEEP_TIMEOUT_MS);
+            Serial.println("Auto Sleep Timeout Reached. Entering light sleep.");
             StickCP2.Lcd.fillScreen(BLACK);
             StickCP2.Lcd.setTextDatum(MC_DATUM);
-            StickCP2.Lcd.drawString("Auto Power Off", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2);
-            delay(1500);
-            StickCP2.Power.powerOff();
-            // Code below here won't execute after powerOff()
+            StickCP2.Lcd.drawString("Sleeping...", StickCP2.Lcd.width()/2, StickCP2.Lcd.height()/2);
+            delay(SLEEP_MESSAGE_DELAY_MS); // Allow message to display
+            StickCP2.Lcd.sleep(); // Turn off display
+            StickCP2.Lcd.waitDisplay(); // Wait for display operation to complete
+
+            // Configure wakeup sources (BtnA = G37, BtnB/PWR = G39)
+            // Wake up when EITHER button is pressed (LOW level)
+            // --- TESTING: Wake only on BtnA (GPIO 37) ---
+            esp_sleep_enable_ext1_wakeup((1ULL << 37), ESP_EXT1_WAKEUP_ALL_LOW);
+            Serial.println("Configured EXT1 wakeup on GPIO 37 (LOW)");
+            // --- Original line for both buttons: ---
+            // esp_sleep_enable_ext1_wakeup((1ULL << 37) | (1ULL << 39), ESP_EXT1_WAKEUP_ALL_LOW);
+            // Serial.println("Configured EXT1 wakeup on GPIO 37 and 39 (LOW)");
+
+            // Enter light sleep
+            esp_light_sleep_start();
+
+            // --- Execution resumes here after wakeup ---
+            Serial.println("Woke up from light sleep!");
+            StickCP2.Lcd.wakeup(); // Turn display back on
+            // Optional: Short debounce delay after wakeup
+            delay(200);
+            // Immediately reset activity timer to prevent going back to sleep
+            resetActivityTimer();
+            // Force screen redraw
+            redrawMenu = true;
+            // Optional: Play a short wake-up sound
+            // playTone(1000, 50); delay(50); playTone(1500, 50); noTone(BUZZER_PIN); noTone(BUZZER_PIN_2);
+
         }
     }
 
@@ -808,7 +834,7 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
             else if (strcmp(items[i], "Recoil Threshold") == 0) itemText += String(recoilThreshold, 1);
             else if (strcmp(items[i], "Screen Rotation") == 0) itemText += screenRotationSetting;
             else if (strcmp(items[i], "Boot Animation") == 0) itemText += (playBootAnimation ? "On" : "Off");
-            else if (strcmp(items[i], "Auto Power Off") == 0) itemText += (enableAutoOff ? "On" : "Off");
+            else if (strcmp(items[i], "Auto Sleep") == 0) itemText += (enableAutoSleep ? "On" : "Off"); // <-- Renamed
         }
         // Note: The value for Par Time X is already included in the dynamically generated itemText
 
@@ -839,7 +865,7 @@ void displayMenu(const char* title, const char* items[], int count, int selectio
  * @brief Handles input for the Mode Selection screen with scrolling.
  */
 void handleModeSelectionInput() {
-    resetActivityTimer(); // Activity on this screen
+    // resetActivityTimer(); // <-- REMOVED: Don't reset timer just for being on this screen
     const char* modeItems[] = {"Live Fire", "Dry Fire Par", "Noisy Range"};
     int modeCount = sizeof(modeItems) / sizeof(modeItems[0]);
     int rotation = StickCP2.Lcd.getRotation();
@@ -863,10 +889,12 @@ void handleModeSelectionInput() {
     bool downPressed = (rotation == 3) ? StickCP2.BtnB.wasClicked() : M5.BtnPWR.wasClicked();
 
     if (upPressed) { // Up Action
+        resetActivityTimer(); // Reset timer on button press
         currentMenuSelection = (currentMenuSelection - 1 + modeCount) % modeCount; redrawMenu = true;
         if(rotation == 3) Serial.println("Bottom (BtnPWR) Click Detected for Menu Up (Rotation 3)");
     }
     if (downPressed) { // Down Action
+        resetActivityTimer(); // Reset timer on button press
         currentMenuSelection = (currentMenuSelection + 1) % modeCount; redrawMenu = true;
          if(rotation != 3) Serial.println("Bottom (BtnPWR) Click Detected for Menu Down");
          else Serial.println("Top (BtnB) Click Detected for Menu Down (Rotation 3)");
@@ -874,6 +902,7 @@ void handleModeSelectionInput() {
 
     // Use wasClicked for Select (Short Press Front)
     if (StickCP2.BtnA.wasClicked()) {
+        resetActivityTimer(); // Reset timer on button press
         currentMode = (OperatingMode)currentMenuSelection;
         Serial.printf("Mode Selected: %d\n", currentMode);
         switch (currentMode) {
@@ -899,7 +928,7 @@ void handleSettingsInput() {
 
     // --- Static Menu Definitions ---
     static const char* mainItems[] = {"General", "Dry Fire", "Noisy Range", "Device Status", "List Files", "Power Off Now", "Save & Exit"}; // <-- Added Power Off
-    static const char* generalItems[] = {"Max Shots", "Beep Settings", "Shot Threshold", "Screen Rotation", "Boot Animation", "Auto Power Off", "Calibrate Thresh.", "Back"}; // <-- Added Auto Off
+    static const char* generalItems[] = {"Max Shots", "Beep Settings", "Shot Threshold", "Screen Rotation", "Boot Animation", "Auto Sleep", "Calibrate Thresh.", "Back"}; // <-- Renamed Auto Off
     static const char* beepItems[] = {"Beep Duration", "Beep Tone", "Back"};
     static const char* noisyItems[] = {"Recoil Threshold", "Calibrate Recoil", "Back"};
 
@@ -1037,8 +1066,8 @@ void handleSettingsInput() {
                 settingBeingEdited = EDIT_ROTATION; editingIntValue = screenRotationSetting; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Boot Animation") == 0) {
                 settingBeingEdited = EDIT_BOOT_ANIM; editingBoolValue = playBootAnimation; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
-            } else if (strcmp(editingSettingName, "Auto Power Off") == 0) { // <-- NEW Action
-                settingBeingEdited = EDIT_AUTO_OFF; editingBoolValue = enableAutoOff; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
+            } else if (strcmp(editingSettingName, "Auto Sleep") == 0) { // <-- Renamed Action
+                settingBeingEdited = EDIT_AUTO_SLEEP; editingBoolValue = enableAutoSleep; setState(EDIT_SETTING); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Calibrate Thresh.") == 0) {
                 setState(CALIBRATE_THRESHOLD); peakRMSOverall = 0; micPeakRMS.resetPeak(); needsActionRedraw = false; StickCP2.Lcd.fillScreen(BLACK);
             } else if (strcmp(editingSettingName, "Back") == 0) {
@@ -1129,7 +1158,7 @@ void handleEditSettingInput() {
             case EDIT_RECOIL_THRESHOLD: editingFloatValue = min(editingFloatValue + (upPressed ? 0.1f : -0.1f), 5.0f); if(editingFloatValue < 0.5f) editingFloatValue=0.5f; break;
             case EDIT_ROTATION: editingIntValue = (editingIntValue + (upPressed ? 1 : -1) + 4) % 4; break; // Cycle 0-3
             case EDIT_BOOT_ANIM: editingBoolValue = !editingBoolValue; break; // Toggle boolean
-            case EDIT_AUTO_OFF: editingBoolValue = !editingBoolValue; break; // Toggle boolean <-- NEW
+            case EDIT_AUTO_SLEEP: editingBoolValue = !editingBoolValue; break; // Toggle boolean <-- Renamed
             default: valueChanged = false; break;
         }
         // Apply rotation change immediately
@@ -1171,7 +1200,7 @@ void handleEditSettingInput() {
             case EDIT_RECOIL_THRESHOLD: recoilThreshold = editingFloatValue; break;
             case EDIT_ROTATION: screenRotationSetting = editingIntValue; break; // Save confirmed rotation
             case EDIT_BOOT_ANIM: playBootAnimation = editingBoolValue; break;
-            case EDIT_AUTO_OFF: enableAutoOff = editingBoolValue; break; // <-- NEW: Save Auto Off
+            case EDIT_AUTO_SLEEP: enableAutoSleep = editingBoolValue; break; // <-- Renamed: Save Auto Sleep
             default: break;
         }
         setState(stateBeforeEdit);
@@ -1212,7 +1241,7 @@ void displayEditScreen() {
         StickCP2.Lcd.setTextFont(0);
         StickCP2.Lcd.setTextSize(1);
         // Use helper functions for dynamic button labels
-        if (settingBeingEdited == EDIT_BOOT_ANIM || settingBeingEdited == EDIT_AUTO_OFF) { // Special instructions for toggle
+        if (settingBeingEdited == EDIT_BOOT_ANIM || settingBeingEdited == EDIT_AUTO_SLEEP) { // Special instructions for toggle <-- Renamed
             StickCP2.Lcd.drawString(getUpButtonLabel() + " or " + getDownButtonLabel() + " = Toggle", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
         } else {
             StickCP2.Lcd.drawString(getUpButtonLabel() + "=Up / " + getDownButtonLabel() + "=Down", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() - 25);
@@ -1242,7 +1271,7 @@ void displayEditScreen() {
              StickCP2.Lcd.drawFloat(editingFloatValue, 1, StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
              break;
         case EDIT_BOOT_ANIM:
-        case EDIT_AUTO_OFF: // <-- Use same logic for Auto Off toggle
+        case EDIT_AUTO_SLEEP: // <-- Use same logic for Auto Sleep toggle
              StickCP2.Lcd.setTextFont(4); StickCP2.Lcd.setTextSize(1); // <-- Use Font 4 for On/Off
              StickCP2.Lcd.drawString(editingBoolValue ? "On" : "Off", StickCP2.Lcd.width() / 2, StickCP2.Lcd.height() / 2);
              break;
@@ -1330,8 +1359,8 @@ void handleCalibrationInput(TimerState calibrationType) {
         Serial.println("Calibration cancelled.");
         stateBeforeEdit = (calibrationType == CALIBRATE_THRESHOLD) ? SETTINGS_MENU_GENERAL : SETTINGS_MENU_NOISY;
         setState(stateBeforeEdit);
-        // Adjust selection index based on Boot Animation item
-        currentMenuSelection = (calibrationType == CALIBRATE_THRESHOLD) ? 7 : 1; // Index of Calibrate items (adjusted for Auto Off)
+        // Adjust selection index based on Boot Animation/Auto Off items
+        currentMenuSelection = (calibrationType == CALIBRATE_THRESHOLD) ? 7 : 1; // Index of Calibrate items
         menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
         StickCP2.Lcd.fillScreen(BLACK);
         playUnsuccessBeeps();
@@ -1341,7 +1370,7 @@ void handleCalibrationInput(TimerState calibrationType) {
             shotThresholdRms = (int)peakRMSOverall;
             stateBeforeEdit = SETTINGS_MENU_GENERAL;
             setState(stateBeforeEdit);
-            currentMenuSelection = 7; // Index of Calibrate Thresh (adjusted for Auto Off)
+            currentMenuSelection = 7; // Index of Calibrate Thresh
             menuScrollOffset = max(0, currentMenuSelection - itemsPerScreen + 1);
             StickCP2.Lcd.fillScreen(BLACK);
             playSuccessBeeps();
@@ -1725,7 +1754,7 @@ void loadSettings() {
     screenRotationSetting = preferences.getInt(KEY_ROTATION, 3); // Default to 3
     if (screenRotationSetting < 0 || screenRotationSetting > 3) screenRotationSetting = 3; // Validate
     playBootAnimation = preferences.getBool(KEY_BOOT_ANIM, true);
-    enableAutoOff = preferences.getBool(KEY_AUTO_OFF, true);
+    enableAutoSleep = preferences.getBool(KEY_AUTO_SLEEP, true); // <-- Load Auto Sleep setting
 
     Serial.println("Settings loaded.");
 }
@@ -1749,7 +1778,7 @@ void saveSettings() {
     preferences.putFloat(KEY_NR_RECOIL, recoilThreshold);
     preferences.putInt(KEY_ROTATION, screenRotationSetting);
     preferences.putBool(KEY_BOOT_ANIM, playBootAnimation);
-    preferences.putBool(KEY_AUTO_OFF, enableAutoOff);
+    preferences.putBool(KEY_AUTO_SLEEP, enableAutoSleep); // <-- Save Auto Sleep setting
     Serial.println("Settings saved.");
 }
 
