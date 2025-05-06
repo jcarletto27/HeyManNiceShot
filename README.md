@@ -94,6 +94,12 @@ The LittleFS partition should contain the following files in the root directory 
 * `/3.jpg`
 * ... (up to `/150.jpg` or however many frames you have, respecting `MAX_BOOT_JPG_FRAMES`)
 
+## Model Printed and Attached to a Blue Gun
+
+* ![Attached](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164010292.MP.jpg?raw=true)
+* ![Mounted in Lanyard Mode](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164025303.MP.jpg?raw=true)
+* ![Closeup of the mounting mechanism](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164028005?raw=true)
+
 ## Future Enhancements
 
 * Fully implement IMU data reading and processing for `CALIBRATE_RECOIL`.
