@@ -98,7 +98,7 @@ The LittleFS partition should contain the following files in the root directory 
 
 * ![Attached](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164010292.MP.jpg?raw=true)
 * ![Mounted in Lanyard Mode](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164025303.MP.jpg?raw=true)
-* ![Closeup of the mounting mechanism](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164028005?raw=true)
+* ![Closeup of the mounting mechanism](https://github.com/jcarletto27/HeyManNiceShotTimer/blob/main/images/PXL_20250506_164028005.jpg?raw=true)
 
 ## Future Enhancements
 
