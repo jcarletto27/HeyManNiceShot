@@ -11,6 +11,20 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
 * **External Buzzer (Optional but Recommended):** Connect an active buzzer to GPIO 25/GND and GPIO 2/GND for louder local audio feedback.
 * **Bluetooth Speaker/Headset (Optional):** Any standard A2DP compatible speaker or headset for receiving audio prompts wirelessly.
 
+## Quickstart Guide Windows
+* **Create a new directory to store files and your virtual environment:** in the folder `C:\Users\%USERNAME%\Documents\` create a folder called HeyManNiceShot
+* **Download the binary file:** [0.9RC BIN of Hey Man, Nice Shot](https://github.com/jcarletto27/HeyManNiceShotTimer/releases/download/0.9RC/HMNS_T.bin) and place it in the folder we just created
+* **Make sure you have Python 3 installed:** [Python Downloads](https://www.python.org/downloads/) minor version differences shouldn't matter too much, but I developed and tested on 3.13.3
+* **Plug in your M5Stick**
+* Open a powershell window in the folder we created above and type the following commands:
+  * `python -m venv .venv`  this might take a minute, it's copying files over for a new virtual environment. this helps to diagnose any issues.
+  * `.\.venv\Scripts\Activate.ps1` this activates the environment and you should see (.venv) at the beginning of your command line
+  * `pip install --upgrade pip` this ensures you're using the latest pip installer
+  * `pip install esptool` this installs the key library and it's dependencies we need to flash the m5stick
+  * `Get-PnpDevice -Class 'Ports' | Where-Object { $_.Present } | Select-Object Name, Present, Status` take note of the device COM number for the m5, mine displayed as `USB-Enhanced-SERIAL CH9102 (COM6)`, yours may be different
+  * `esptool -p COM6 write_flash 0x0 HMNS_T.bin` you should replace the com port number with whatever your device is from the previous command.
+
+
 ## Features
 
 * **Multiple Operating Modes:**
