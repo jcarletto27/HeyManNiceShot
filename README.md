@@ -11,7 +11,14 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
 * **External Buzzer (Optional but Recommended):** Connect an active buzzer to GPIO 25/GND and GPIO 2/GND for louder local audio feedback.
 * **Bluetooth Speaker/Headset (Optional):** Any standard A2DP compatible speaker or headset for receiving audio prompts wirelessly.
 
-## Quickstart Guide Windows
+## Chrome/Browser Based Quick Start
+* **Download the binary file:** [0.9RC BIN of Hey Man, Nice Shot](https://github.com/jcarletto27/HeyManNiceShotTimer/releases/download/0.9RC/HMNS_T.bin)
+* **Go to the official Espressif Web Programmer:** [Web Programmer](https://espressif.github.io/esptool-js/)
+* **Connect to your device:** Press connect and select the COM Port for the device
+* **Change Address and pick the BIN File:** Change Flash Address to `0x0` and select the HMNS_T.bin file you just downloaded
+* **Progam:** Press Blue program button, may take around 5 minutes to program
+
+## Quickstart Guide for Windows
 * **Create a new directory to store files and your virtual environment:** in the folder `C:\Users\%USERNAME%\Documents\` create a folder called HeyManNiceShot
 * **Download the binary file:** [0.9RC BIN of Hey Man, Nice Shot](https://github.com/jcarletto27/HeyManNiceShotTimer/releases/download/0.9RC/HMNS_T.bin) and place it in the folder we just created
 * **Make sure you have Python 3 installed:** [Python Downloads](https://www.python.org/downloads/) minor version differences shouldn't matter too much, but I developed and tested on 3.13.3
