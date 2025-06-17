@@ -53,7 +53,7 @@ This project turns an M5StickCPlus2 into a versatile shot timer for live fire an
 ## Libraries Required
 
 * **M5StickCPlus2 Library:** (Installs M5Unified and M5GFX as dependencies) - Install via Arduino Library Manager or PlatformIO Library Manager.
-* **ESP32-A2DP Library (by pschatzmann):** The library used for Bluetooth A2DP source functionality. Install via Arduino Library Manager or PlatformIO (`lib_deps = pschatzmann/ESP32-A2DP`).
+* **ESP32-A2DP Library (by pschatzmann):** [link](https://github.com/pschatzmann/ESP32-A2DP)The library used for Bluetooth A2DP source functionality. Follow the instructions from the ESP32-A2DP git repo.
 * **Preferences:** Built-in ESP32 library.
 * **LittleFS:** Built-in ESP32 library (ensure ESP32 core is up-to-date).
 * **M5MicPeakRMS:** [link](https://github.com/jcarletto27/M5MicPeakRMS) The custom library included (`M5MicPeakRMS.h`, `M5MicPeakRMS.cpp`) for microphone peak detection. Place these files in your sketch directory or in your Arduino libraries folder under a subfolder named `M5MicPeakRMS`.
